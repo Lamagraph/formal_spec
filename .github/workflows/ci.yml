@@ -24,6 +24,18 @@ jobs:
         with:
           opam_file: 'lamagraph-formal-spec.opam'
           custom_image: 'rocq/rocq-prover:9.3'
+          # The image pins dune 3.21.1, and opam never upgrades a pinned
+          # package — but (using rocq 0.14) needs dune >= 3.24. Unpin dune
+          # before the default install so its `opam install --deps-only`
+          # can upgrade it. before_install runs before install (the
+          # before_script hook runs after it — too late).
+          before_install: |
+            startGroup "Print opam config"
+              opam config list; opam repo list; opam list
+            endGroup
+            startGroup "Unpin dune (image pins 3.21.1; project needs >= 3.24)"
+              opam pin remove dune
+            endGroup
           before_script: |
             startGroup "Workaround permission issue"
               sudo chown -R 1000:1000 .
