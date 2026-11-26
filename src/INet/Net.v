@@ -76,8 +76,8 @@ Fixpoint agent_label_lookup (A : Type) (a : nat) (l : list (nat * A)) : option A
 
 (** [agent_label A N a] is the label of agent [a] in [N], or [None] if [a] is
     not an agent of [N]. When [N] is well-formed ([wf_ids]), the label is
-    well-defined: every occurrence of [a] in [nt_agents N] carries the same
-    label, so the result does not depend on which occurrence is found. *)
+    well-defined: agent ids are unique, so [a] occurs at most once in
+    [nt_agents N] and the result does not depend on which occurrence is found. *)
 Definition agent_label (A : Type) (N : Net A) (a : nat) : option A :=
   agent_label_lookup A a (nt_agents N).
 
@@ -107,24 +107,21 @@ Definition port_used (A : Type) (N : Net A) (pr : port_ref) : Prop :=
     label is the number of its auxiliary ports; the port-range check needs it,
     which is why [Ar] is a parameter).
 
-    It is a record whose five fields are the five well-formedness conditions,
+    It is a record whose four fields are the four well-formedness conditions,
     each exposed as a named projection so that later modules can address them
     individually (this is the "projection lemma" for each condition — no
-    separate lemma is needed, [wf_ids H], [wf_links H], [wf_ports H],
-    [wf_ends H] and [wf_unique_ids H] extract the corresponding conjunct from
-    a proof [H]):
-    * [wf_ids] — functional labels: no agent id carries two different labels,
-      so the label of a present agent is well-defined;
+    separate lemma is needed, [wf_ids H], [wf_links H], [wf_ports H] and
+    [wf_ends H] extract the corresponding conjunct from a proof [H]):
+    * [wf_ids] — unique agent ids: no agent id appears more than once in the
+      agent list. This makes the label of a present agent well-defined (the
+      consequence [wf_ids_functional]: no id carries two labels) and is what
+      lets [interface] enumerate the agents' ports without duplicates;
     * [wf_links] — valid links: every link joins two present agents, and each
       end's port number is in range for that agent's arity;
     * [wf_ports] — port-injectivity: no port is an end of two distinct links;
-    * [wf_ends] — distinct link ends: the two ends of each link differ;
-    * [wf_unique_ids] — unique agent ids: no agent id appears more than once
-      in the agent list (needed so that enumerating the agents' ports, as
-      [interface] does, yields no duplicates). *)
+    * [wf_ends] — distinct link ends: the two ends of each link differ. *)
 Record well_formed (A : Type) (Ar : A -> nat) (N : Net A) : Prop := mkWellFormed {
-  wf_ids : forall a l1 l2,
-    In (a, l1) (nt_agents N) -> In (a, l2) (nt_agents N) -> l1 = l2;
+  wf_ids : NoDup (map fst (nt_agents N));
   wf_links : forall a b p q,
     In ((a, p), (b, q)) (nt_links N)
     -> has_agent A N a
@@ -135,18 +132,16 @@ Record well_formed (A : Type) (Ar : A -> nat) (N : Net A) : Prop := mkWellFormed
   wf_ports : forall pr l1 l2,
     In l1 (nt_links N) -> In l2 (nt_links N) -> l1 <> l2
     -> ~(link_end l1 pr /\ link_end l2 pr);
-  wf_ends : forall l, In l (nt_links N) -> fst l <> snd l;
-  wf_unique_ids : NoDup (map fst (nt_agents N))
+  wf_ends : forall l, In l (nt_links N) -> fst l <> snd l
 }.
 
 (* The parameters [A], [Ar], [N] are recoverable from a [well_formed] proof,
    so make them implicit in the projections: [wf_ids H], [wf_links H],
-   [wf_ports H], [wf_ends H] and [wf_unique_ids H] read naturally. *)
+   [wf_ports H] and [wf_ends H] read naturally. *)
 Arguments wf_ids {A Ar N} _.
 Arguments wf_links {A Ar N} _.
 Arguments wf_ports {A Ar N} _.
 Arguments wf_ends {A Ar N} _.
-Arguments wf_unique_ids {A Ar N} _.
 
 (**************************************************************************)
 (** ** Basic facts *)
@@ -169,6 +164,74 @@ Lemma wf_link_agents (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A A
   has_agent A N a /\ has_agent A N b.
 Proof.
   destruct (wf_links H a b p q Hl) as [Ha [Hb _]]; exact (conj Ha Hb).
+Qed.
+
+(**************************************************************************)
+(** ** List facts used by the well-formedness consequences *)
+
+(** If [x] occurs in [L], then [f x] occurs in [map f L]. The stdlib has no
+    named [In_map], so we state it here for reuse. *)
+Lemma In_map {A B : Type} (f : A -> B) (L : list A) (x : A) :
+  In x L -> In (f x) (map f L).
+Proof.
+  induction L as [|z rest IH]; intros H.
+  - simpl in H. inversion H.
+  - simpl in H. destruct H as [H|H].
+    + subst z. simpl. left. reflexivity.
+    + right. apply IH. exact H.
+Qed.
+
+(** A [NoDup] list built by cons-ing [x] does not already contain [x]. This is
+    the [NoDup_cons] constructor's premise, isolated for reuse. *)
+Lemma NoDup_cons_notin (A : Type) (x : A) (l : list A) :
+  NoDup (x :: l) -> ~ In x l.
+Proof.
+  intros H. inversion H. assumption.
+Qed.
+
+(** A [NoDup] list built by cons-ing [x] over [l] has [l] itself [NoDup]. This
+    is the [NoDup_cons] constructor's tail premise, isolated for reuse. *)
+Lemma NoDup_cons_nodup (A : Type) (x : A) (l : list A) :
+  NoDup (x :: l) -> NoDup l.
+Proof.
+  intros H. inversion H. assumption.
+Qed.
+
+(** If [map f L] has no duplicates, then [f] is injective on the elements of
+    [L]: two elements of [L] with the same image under [f] are equal. This is
+    the multiplicity-free form of "NoDup of the image implies injectivity on
+    the preimage elements". *)
+Lemma nodup_map_inj (A B : Type) (f : A -> B) (L : list A) (Hn : NoDup (map f L))
+      (x y : A) (Hx : In x L) (Hy : In y L) (Hf : f x = f y) : x = y.
+Proof.
+  revert Hx Hy Hf.
+  induction L as [|z rest IH]; intros Hx Hy Hf.
+  - simpl in Hx. inversion Hx.
+  - simpl in Hx. destruct Hx as [Hx|Hx].
+    + (* Hx : z = x *)
+      simpl in Hy. destruct Hy as [Hy|Hy].
+      * (* Hy : z = y *)
+        subst z. exact Hy.
+      * (* Hy : In y rest *)
+        subst z.
+        exfalso.
+        assert (Hnotin : ~ In (f x) (map f rest)).
+        { exact (NoDup_cons_notin _ _ _ Hn). }
+        assert (Hin : In (f x) (map f rest)).
+        { rewrite Hf. apply In_map. exact Hy. }
+        contradiction.
+    + (* Hx : In x rest *)
+      simpl in Hy. destruct Hy as [Hy|Hy].
+      * (* Hy : z = y *)
+        subst z.
+        exfalso.
+        assert (Hnotin : ~ In (f y) (map f rest)).
+        { exact (NoDup_cons_notin _ _ _ Hn). }
+        assert (Hin : In (f y) (map f rest)).
+        { rewrite <- Hf. apply In_map. exact Hx. }
+        contradiction.
+      * (* Hy : In y rest *)
+        eapply IH; [exact (NoDup_cons_nodup _ _ _ Hn) | exact Hx | exact Hy | exact Hf].
 Qed.
 
 (**************************************************************************)
@@ -386,6 +449,24 @@ Proof.
         apply Hfun; [apply in_cons; exact H1 | apply in_cons; exact H2].
 Qed.
 
+(** In a well-formed net, an agent id carries at most one label: two entries
+    of the agent list with the same id have the same label. This is the
+    functional-labels consequence of the unique-ids condition [wf_ids] (NoDup
+    of the ids), isolated for use where a label's uniqueness is needed. *)
+Lemma wf_ids_functional (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (a : nat) (l1 l2 : A) :
+  In (a, l1) (nt_agents N) -> In (a, l2) (nt_agents N) -> l1 = l2.
+Proof.
+  intros H1 H2.
+  exact (f_equal snd
+           (nodup_map_inj _ _ (fun p => fst p) (nt_agents N) (wf_ids H)
+             (a, l1) (a, l2) H1 H2 (reflexivity _))).
+Qed.
+
+(* [A], [Ar], [N] are recoverable, so make them implicit: [wf_ids_functional
+   H a] reads naturally. *)
+Arguments wf_ids_functional {A Ar N} _ _ _ _.
+
 (** In a well-formed net, the label of a present agent is the label stored in
     the agent list. *)
 Lemma agent_label_In (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
@@ -393,7 +474,7 @@ Lemma agent_label_In (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A A
   agent_label A N a = Some alpha.
 Proof.
   unfold agent_label.
-  exact (agent_label_lookup_In A a (nt_agents N) alpha Ha (wf_ids H a)).
+  exact (agent_label_lookup_In A a (nt_agents N) alpha Ha (wf_ids_functional H a)).
 Qed.
 
 (** If the lookup of [a] in [l] returns [Some la], then [(a, la)] occurs in
@@ -562,7 +643,7 @@ Proof.
   unfold interface.
   apply (Permutation_NoDup (PortRefSort.Permuted_sort _)).
   apply fpo_flat_NoDup.
-  exact (wf_unique_ids H).
+  exact (wf_ids H).
 Qed.
 
 (** [interface] is sorted by (agent id, port number) — for any net, no
