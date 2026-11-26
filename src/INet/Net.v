@@ -16,6 +16,8 @@ Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Lists.Finite.
 Require Import Stdlib.Logic.Classical.
+Require Import Stdlib.Logic.Description.
+Require Import Stdlib.Logic.ClassicalDescription.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Sorting.Mergesort.
 Require Import Stdlib.Sorting.Permutation.
@@ -729,4 +731,1034 @@ Proof.
   subst c.
   (* Hablink : has_link (a,0) (b,0); Hcdlink : has_link (a,0) (d,0). *)
   exact (f_equal fst (link_unique A Ar N H (a, 0) (b, 0) (d, 0) Hablink Hcdlink)).
+Qed.
+
+(**************************************************************************)
+(** ** Net isomorphism (equality up to renaming) *)
+
+(** Two nets are [net_iso] when one can be obtained from the other by
+    renaming agent ids: a function [ni_map] that bijects the agent sets
+    (distinct agents of [N1] get distinct names in [N2], and every agent of
+    [N2] is the image of a unique agent of [N1]) while carrying the links
+    along. [Ar] is carried for signature uniformity with the other net
+    predicates; [net_iso] itself does not consult it.
+
+    The clauses are [Permutation]s of the agent and link lists, not pointwise
+    statements: the multiset of (id, label) pairs of [N2] is exactly the
+    image, under [ni_map], of that of [N1], and likewise for links. This pins
+    down multiplicities and forbids extra or missing links, which is what
+    makes [net_iso] a genuine equivalence on well-formed nets (see
+    [net_iso_reflexive], [net_iso_symmetric], [net_iso_transitive]) and what
+    lets a well-formed source yield a well-formed target
+    ([net_iso_pres_wf]). *)
+Record net_iso (A : Type) (Ar : A -> nat) (N1 N2 : Net A) := mkNetIso {
+  ni_map : nat -> nat;
+  ni_agents : Permutation
+                (map (fun p => (ni_map (fst p), snd p)) (nt_agents N1))
+                (nt_agents N2);
+  ni_inj : forall a1 a2,
+    has_agent A N1 a1 -> has_agent A N1 a2
+    -> ni_map a1 = ni_map a2 -> a1 = a2;
+  ni_links : Permutation
+               (map (fun l => ((ni_map (fst (fst l)), snd (fst l)),
+                               (ni_map (fst (snd l)), snd (snd l))))
+                   (nt_links N1))
+               (nt_links N2)
+}.
+
+(* The parameters [A], [Ar], [N1], [N2] are recoverable from a [net_iso]
+   proof, so make them implicit in the projections: [ni_map H], [ni_agents H],
+   [ni_inj H], [ni_links H] read naturally. *)
+Arguments ni_map {A Ar N1 N2} _.
+Arguments ni_agents {A Ar N1 N2} _.
+Arguments ni_inj {A Ar N1 N2} _.
+Arguments ni_links {A Ar N1 N2} _.
+Arguments mkNetIso {A Ar N1 N2} _ _ _ _.
+
+(**************************************************************************)
+(** ** List and lookup facts used by the isomorphism *)
+
+(** [map f (map g l) = map (fun x => f (g x)) l]. The stdlib has no named
+    [map_comp]. *)
+Lemma map_comp {A B C : Type} (f : B -> C) (g : A -> B) (l : list A) :
+  map f (map g l) = map (fun x => f (g x)) l.
+Proof.
+  induction l as [|x rest IH]; simpl; [ reflexivity | f_equal; assumption ].
+Qed.
+
+(** If [f] acts as the identity on every element of [l], then [map f l = l]. *)
+Lemma map_id_on_elements {A : Type} (f : A -> A) (l : list A)
+      (Hid : forall x, In x l -> f x = x) : map f l = l.
+Proof.
+  induction l as [|x rest IH]; simpl.
+  - reflexivity.
+  - assert (Hx : f x = x).
+    { apply Hid. left. reflexivity. }
+    rewrite Hx.
+    f_equal.
+    apply IH.
+    intros y Hy. apply Hid. right. exact Hy.
+Qed.
+
+(** If [b] occurs in [map f l], then it is the image of an element of [l]. *)
+Lemma In_map_inv {A B : Type} (f : A -> B) (l : list A) (b : B) :
+  In b (map f l) -> exists a, In a l /\ f a = b.
+Proof.
+  induction l as [|x rest IH]; intros H.
+  - simpl in H. inversion H.
+  - simpl in H. destruct H as [H|H].
+    + exists x. split; [ left; reflexivity | exact H ].
+    + destruct (IH H) as [a [Ha Hfa]]. exists a. split; [ right; exact Ha | exact Hfa ].
+Qed.
+
+(** If [a] occurs among the ids of [l], the lookup finds some label for it. *)
+Lemma agent_label_In_map (A : Type) (a : nat) (l : list (nat * A)) :
+  In a (map fst l) -> agent_label_lookup A a l <> None.
+Proof.
+  induction l as [| (id, lbl) rest IH]; intros H.
+  - simpl in H. inversion H.
+  - simpl in H. destruct H as [H|H].
+    + subst a.
+      unfold agent_label_lookup.
+      assert (Hb : Nat.eqb id id = true) by (apply (proj2 (Nat.eqb_eq id id)); reflexivity).
+      rewrite Hb. simpl. intro Heq. discriminate Heq.
+    + destruct (Nat.eqb id a) eqn:Hb.
+      * unfold agent_label_lookup.
+        rewrite Hb. simpl. intro Heq. discriminate Heq.
+      * unfold agent_label_lookup.
+        rewrite Hb. simpl. apply IH. exact H.
+Qed.
+
+(** [has_agent] is membership of the id in the agent list. *)
+Lemma has_agent_In (A : Type) (N : Net A) (a : nat) :
+  has_agent A N a <-> In a (map fst (nt_agents N)).
+Proof.
+  unfold has_agent, agent_label.
+  split.
+  - intros H.
+    assert (Hpos : exists la, agent_label_lookup A a (nt_agents N) = Some la).
+    { destruct (agent_label_lookup A a (nt_agents N)) as [la|].
+      + exists la. reflexivity.
+      + exfalso. apply H. reflexivity. }
+    destruct Hpos as [la Hal].
+    apply (In_map fst (nt_agents N) (a, la)).
+    exact (agent_label_Some_In A N a la Hal).
+  - intros H.
+    apply agent_label_In_map.
+    exact H.
+Qed.
+
+(** Agents of [N1] are carried to agents of [N2] by [ni_map]. *)
+Lemma net_iso_agent_fwd (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (a : nat) :
+  has_agent A N1 a -> has_agent A N2 (ni_map H a).
+Proof.
+  intros Ha.
+  apply (proj1 (has_agent_In A N1 a)) in Ha.
+  apply In_map_inv in Ha as [p [Hp Hpa]].
+  destruct p as [x lx].
+  simpl in Hpa.
+  subst x.
+  apply (In_map (fun p => (ni_map H (fst p), snd p)) (nt_agents N1) (a, lx)) in Hp.
+  apply (Permutation_in _ (ni_agents H)) in Hp.
+  apply (proj2 (has_agent_In A N2 (ni_map H a))).
+  apply (In_map fst (nt_agents N2) (ni_map H a, lx)).
+  exact Hp.
+Qed.
+
+(** Every agent of [N2] is the image, under [ni_map], of an agent of [N1]
+    (unique, by [ni_inj]). Together with [net_iso_agent_fwd], [ni_map] is a
+    bijection between the agent sets. *)
+Lemma net_iso_surj (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (b : nat) :
+  has_agent A N2 b -> exists a, has_agent A N1 a /\ ni_map H a = b.
+Proof.
+  intros Hb.
+  apply (proj1 (has_agent_In A N2 b)) in Hb.
+  apply In_map_inv in Hb as [p [Hp Hpb]].
+  destruct p as [x lx].
+  simpl in Hpb.
+  subst x.
+  apply (Permutation_in _ (Permutation_sym (ni_agents H))) in Hp.
+  apply (In_map_inv (fun p : nat * A => (ni_map H (fst p), snd p)) (nt_agents N1) (b, lx))
+         in Hp as [q [Hq Hfq]].
+  destruct q as [a la].
+  injection Hfq as Hf _.
+  exists a.
+  split.
+  - apply (proj2 (has_agent_In A N1 a)).
+    apply (In_map fst (nt_agents N1) (a, la)).
+    exact Hq.
+  - exact Hf.
+Qed.
+
+(**************************************************************************)
+(** ** The inverse of an isomorphism map *)
+
+(** The largest agent id occurring in [N]'s agent list; [max_agent_id N + 1]
+    is therefore an id that is not an agent of [N]. Used to define the
+    inverse of an isomorphism map outside the agent sets. *)
+Definition max_agent_id (A : Type) (N : Net A) : nat :=
+  list_max (map fst (nt_agents N)).
+
+Lemma nat_le_trans (a b c : nat) : a <= b -> b <= c -> a <= c.
+Proof.
+  intros H1 H2. induction H2 as [|c' Hc' IH].
+  - exact H1.
+  - apply (le_S a c'). exact IH.
+Qed.
+
+Lemma list_max_upper_bound (l : list nat) (x : nat) :
+  In x l -> x <= list_max l.
+Proof.
+  induction l as [|h t IH]; intros Hx.
+  - simpl in Hx. inversion Hx.
+  - simpl in Hx. destruct Hx as [Hx|Hx].
+    + subst x. simpl. apply Nat.le_max_l.
+    + apply (nat_le_trans x (list_max t) (list_max (h :: t))).
+      * apply IH. exact Hx.
+      * simpl. apply Nat.le_max_r.
+Qed.
+
+Lemma max_agent_id_notin (A : Type) (N : Net A) :
+  ~ has_agent A N (max_agent_id A N + 1).
+Proof.
+  intros H.
+  apply (proj1 (has_agent_In A N (max_agent_id A N + 1))) in H.
+  specialize (list_max_upper_bound (map fst (nt_agents N)) (max_agent_id A N + 1) H) as Hle.
+  unfold max_agent_id in Hle.
+  exfalso. lia.
+Qed.
+
+(** For [b] an agent of [N2], the preimage of [b] under [f] in [N1]'s agent
+    set exists and is unique. *)
+Lemma net_iso_preimage_unique (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (f : nat -> nat)
+      (Hfwd : forall a, has_agent A N1 a -> has_agent A N2 (f a))
+      (Hinje : forall a1 a2,
+                 has_agent A N1 a1 -> has_agent A N1 a2
+                 -> f a1 = f a2 -> a1 = a2)
+      (Hsurj : forall b,
+                 has_agent A N2 b -> exists a, has_agent A N1 a /\ f a = b)
+      (b : nat) (Hb : has_agent A N2 b) :
+  exists! a, has_agent A N1 a /\ f a = b.
+Proof.
+  destruct (Hsurj b Hb) as [a0 [Ha0 Hf0]].
+  refine (ex_intro _ a0 _).
+  split.
+  - exact (conj Ha0 Hf0).
+  - intros a1 H1.
+    destruct H1 as [Ha1 Hf1].
+    symmetry.
+    exact (Hinje a1 a0 Ha1 Ha0 (eq_trans Hf1 (eq_sym Hf0))).
+Qed.
+
+(** The inverse of an isomorphism map [f] between the agent sets of [N1] and
+    [N2]: for [b] an agent of [N2], the unique agent [a] of [N1] with
+    [f a = b]; for [b] outside [N2]'s agent set, an id outside [N1]'s agent
+    set (so the result still respects the agent sets). The case split uses
+    [excluded_middle_informative] (a [Type]-valued sum) rather than [classic]
+    ([Prop]-valued), because the result is a [nat] and [Prop] cannot be
+    eliminated to build one. *)
+Definition net_iso_inv_map (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (f : nat -> nat)
+      (Hfwd : forall a, has_agent A N1 a -> has_agent A N2 (f a))
+      (Hinje : forall a1 a2,
+                 has_agent A N1 a1 -> has_agent A N1 a2
+                 -> f a1 = f a2 -> a1 = a2)
+      (Hsurj : forall b,
+                 has_agent A N2 b -> exists a, has_agent A N1 a /\ f a = b)
+      (b : nat) : nat :=
+  match excluded_middle_informative (has_agent A N2 b) with
+  | left Hb =>
+    proj1_sig (constructive_definite_description
+               (fun a => has_agent A N1 a /\ f a = b)
+               (net_iso_preimage_unique A Ar N1 N2 f Hfwd Hinje Hsurj b Hb))
+  | right _ =>
+    max_agent_id A N1 + 1
+  end.
+
+(** On agents of [N2], the inverse map lands in [N1]'s agent set and [f]
+    restores [b]. *)
+Lemma net_iso_inv_map_spec (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (f : nat -> nat)
+      (Hfwd : forall a, has_agent A N1 a -> has_agent A N2 (f a))
+      (Hinje : forall a1 a2,
+                 has_agent A N1 a1 -> has_agent A N1 a2
+                 -> f a1 = f a2 -> a1 = a2)
+      (Hsurj : forall b,
+                 has_agent A N2 b -> exists a, has_agent A N1 a /\ f a = b)
+      (b : nat) (Hb : has_agent A N2 b) :
+  has_agent A N1 (net_iso_inv_map A Ar N1 N2 f Hfwd Hinje Hsurj b)
+  /\ f (net_iso_inv_map A Ar N1 N2 f Hfwd Hinje Hsurj b) = b.
+Proof.
+  unfold net_iso_inv_map.
+  destruct (excluded_middle_informative (has_agent A N2 b)) as [Hb'|Hb'].
+  - exact (proj2_sig (constructive_definite_description _
+         (net_iso_preimage_unique A Ar N1 N2 f Hfwd Hinje Hsurj b Hb'))).
+  - exfalso. apply Hb'. exact Hb.
+Qed.
+
+(**************************************************************************)
+(** ** net_iso is an equivalence (on well-formed nets) *)
+
+(** [net_iso] is reflexive. *)
+Lemma net_iso_reflexive (A : Type) (Ar : A -> nat) (N : Net A) :
+  net_iso A Ar N N.
+Proof.
+  refine (mkNetIso (fun a : nat => a) _ _ _).
+  - simpl.
+    assert (Heq : map (fun p : nat * A => (fst p, snd p)) (nt_agents N)
+                   = nt_agents N).
+    { apply map_id_on_elements.
+      intros p _. destruct p as [a la]. reflexivity. }
+    rewrite Heq. apply Permutation_refl.
+  - intros a1 a2 _ _ Heq. simpl in Heq. exact Heq.
+  - change (Permutation (map (fun l : port_ref * port_ref =>
+                              ((fst (fst l), snd (fst l)),
+                               (fst (snd l), snd (snd l))))
+                             (nt_links N)) (nt_links N)).
+    assert (Heq : map (fun l : port_ref * port_ref =>
+                        ((fst (fst l), snd (fst l)),
+                         (fst (snd l), snd (snd l))))
+                   (nt_links N) = nt_links N).
+    { apply map_id_on_elements.
+      intros l _. destruct l as [[a p] [b q]]. reflexivity. }
+    rewrite Heq. apply Permutation_refl.
+Qed.
+
+(** [net_iso] is transitive. *)
+Lemma net_iso_transitive (A : Type) (Ar : A -> nat) (N1 N2 N3 : Net A)
+      (H12 : net_iso A Ar N1 N2) (H23 : net_iso A Ar N2 N3) :
+  net_iso A Ar N1 N3.
+Proof.
+  set (f := ni_map H12).
+  set (g := ni_map H23).
+  set (mapf := fun p : nat * A => (f (fst p), snd p)).
+  set (mapg := fun p : nat * A => (g (fst p), snd p)).
+  set (mapfg := fun p : nat * A => (g (f (fst p)), snd p)).
+  set (imgf := fun l : (nat * nat) * (nat * nat) =>
+                 ((f (fst (fst l)), snd (fst l)), (f (fst (snd l)), snd (snd l)))).
+  set (imgg := fun l : (nat * nat) * (nat * nat) =>
+                 ((g (fst (fst l)), snd (fst l)), (g (fst (snd l)), snd (snd l)))).
+  set (imgfg := fun l : (nat * nat) * (nat * nat) =>
+                  ((g (f (fst (fst l))), snd (fst l)),
+                   (g (f (fst (snd l))), snd (snd l)))).
+  refine (mkNetIso (fun a => g (f a)) _ _ _).
+  - (* ni_agents *)
+    change (Permutation (map mapfg (nt_agents N1)) (nt_agents N3)).
+    assert (Heq : map mapfg (nt_agents N1) = map mapg (map mapf (nt_agents N1))).
+    { rewrite (map_comp mapg mapf (nt_agents N1)).
+      f_equal. }
+    rewrite Heq.
+    apply (Permutation_trans (Permutation_map mapg (ni_agents H12))
+                             (ni_agents H23)).
+  - (* ni_inj *)
+    intros a1 a2 Ha1 Ha2 Heq.
+    apply (ni_inj H12 a1 a2 Ha1 Ha2).
+    apply (ni_inj H23 (f a1) (f a2)
+           (net_iso_agent_fwd A Ar N1 N2 H12 a1 Ha1)
+           (net_iso_agent_fwd A Ar N1 N2 H12 a2 Ha2)) in Heq.
+    exact Heq.
+  - (* ni_links *)
+    change (Permutation (map imgfg (nt_links N1)) (nt_links N3)).
+    assert (Heq : map imgfg (nt_links N1) = map imgg (map imgf (nt_links N1))).
+    { rewrite (map_comp imgg imgf (nt_links N1)).
+      f_equal. }
+    rewrite Heq.
+    apply (Permutation_trans (Permutation_map imgg (ni_links H12))
+                             (ni_links H23)).
+Qed.
+
+(** [net_iso] is symmetric on well-formed sources: the inverse of the
+    renaming (constructed by [net_iso_inv_map]) witnesses the isomorphism in
+    the other direction. The well-formedness of [N1] is used to ensure the
+    link endpoints are agents, so that the inverse map acts as a true inverse
+    on them. *)
+Lemma net_iso_symmetric (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (Hwf : well_formed A Ar N1) :
+  net_iso A Ar N2 N1.
+Proof.
+  set (f := ni_map H).
+  set (Hfwd := fun a : nat => net_iso_agent_fwd A Ar N1 N2 H a).
+  set (Hsurj := fun b : nat => net_iso_surj A Ar N1 N2 H b).
+  set (g := net_iso_inv_map A Ar N1 N2 f Hfwd (ni_inj H) Hsurj).
+  set (agf := fun p : nat * A => (f (fst p), snd p)).
+  set (agg := fun p : nat * A => (g (fst p), snd p)).
+  set (imgf := fun l : (nat * nat) * (nat * nat) =>
+                 ((f (fst (fst l)), snd (fst l)), (f (fst (snd l)), snd (snd l)))).
+  set (imgg := fun l : (nat * nat) * (nat * nat) =>
+                 ((g (fst (fst l)), snd (fst l)), (g (fst (snd l)), snd (snd l)))).
+  refine (mkNetIso g _ _ _).
+  - (* ni_agents: Permutation (map agg (nt_agents N2)) (nt_agents N1) *)
+    assert (Hcomp : forall p, In p (nt_agents N1) -> (g (f (fst p)), snd p) = p).
+    { intros p Hp.
+      destruct p as [a la].
+      change ((g (f a), la) = (a, la)).
+      assert (Ha : has_agent A N1 a).
+      { apply (proj2 (has_agent_In A N1 a)).
+        apply (In_map fst (nt_agents N1) (a, la)).
+        exact Hp. }
+      assert (Hfa : has_agent A N2 (f a)).
+      { exact (net_iso_agent_fwd A Ar N1 N2 H a Ha). }
+      pose proof (net_iso_inv_map_spec A Ar N1 N2 f Hfwd (ni_inj H) Hsurj (f a) Hfa) as Hspec.
+      assert (Hga : g (f a) = a).
+      { apply (ni_inj H (g (f a)) a).
+        - exact (proj1 Hspec).
+        - exact Ha.
+        - exact (proj2 Hspec). }
+      f_equal. exact Hga. }
+    change (Permutation (map agg (nt_agents N2)) (nt_agents N1)).
+    assert (Hmc : map agg (map agf (nt_agents N1)) = nt_agents N1).
+    { rewrite (map_comp agg agf (nt_agents N1)).
+      apply map_id_on_elements.
+      intros p Hp. exact (Hcomp p Hp). }
+    rewrite <- Hmc.
+    exact (Permutation_sym (Permutation_map agg (ni_agents H))).
+  - (* ni_inj *)
+    intros b1 b2 Hb1 Hb2 Heq.
+    pose proof (net_iso_inv_map_spec A Ar N1 N2 f Hfwd (ni_inj H) Hsurj b1 Hb1) as Hs1.
+    pose proof (net_iso_inv_map_spec A Ar N1 N2 f Hfwd (ni_inj H) Hsurj b2 Hb2) as Hs2.
+    rewrite <- (proj2 Hs1).
+    rewrite <- (proj2 Hs2).
+    f_equal. exact Heq.
+  - (* ni_links: Permutation (map imgg (nt_links N2)) (nt_links N1) *)
+    assert (Hcomp : forall l, In l (nt_links N1) -> imgg (imgf l) = l).
+    { intros l Hl.
+      destruct l as [[a p] [b q]].
+      destruct (wf_links Hwf a b p q Hl) as [Ha [Hb _]].
+      assert (Hfa : has_agent A N2 (f a)).
+      { exact (net_iso_agent_fwd A Ar N1 N2 H a Ha). }
+      assert (Hfb : has_agent A N2 (f b)).
+      { exact (net_iso_agent_fwd A Ar N1 N2 H b Hb). }
+      pose proof (net_iso_inv_map_spec A Ar N1 N2 f Hfwd (ni_inj H) Hsurj (f a) Hfa) as Hsa.
+      pose proof (net_iso_inv_map_spec A Ar N1 N2 f Hfwd (ni_inj H) Hsurj (f b) Hfb) as Hsb.
+      assert (Hga : g (f a) = a).
+      { apply (ni_inj H (g (f a)) a).
+        - exact (proj1 Hsa).
+        - exact Ha.
+        - exact (proj2 Hsa). }
+      assert (Hgb : g (f b) = b).
+      { apply (ni_inj H (g (f b)) b).
+        - exact (proj1 Hsb).
+        - exact Hb.
+        - exact (proj2 Hsb). }
+      assert (H1 : (g (f a), p) = (a, p)).
+      { f_equal. exact Hga. }
+      assert (H2 : (g (f b), q) = (b, q)).
+      { f_equal. exact Hgb. }
+      change (((g (f a), p), (g (f b), q)) = ((a, p), (b, q))).
+      f_equal.
+      + exact H1.
+      + exact H2. }
+    change (Permutation (map imgg (nt_links N2)) (nt_links N1)).
+    assert (Hmc : map imgg (map imgf (nt_links N1)) = nt_links N1).
+    { rewrite (map_comp imgg imgf (nt_links N1)).
+      apply map_id_on_elements.
+      intros l Hl. exact (Hcomp l Hl). }
+    rewrite <- Hmc.
+    exact (Permutation_sym (Permutation_map imgg (ni_links H))).
+Qed.
+
+(**************************************************************************)
+(** ** Well-formed nets *)
+
+(** A well-formed net: a [Net] bundled with its [well_formed] proof. This is
+    the domain on which [net_iso] is an equivalence relation (see
+    [net_iso_equivalence]): symmetry of [net_iso] requires the source to be
+    well-formed ([net_iso_symmetric]), so the equivalence is registered over
+    well-formed nets rather than over all nets. *)
+Record WfNet (A : Type) (Ar : A -> nat) := mkWfNet {
+  wfn_net : Net A;
+  wfn_well_formed : well_formed A Ar wfn_net
+}.
+
+(* The parameters [A], [Ar] are recoverable from a [WfNet], so make them
+   implicit in the projections: [wfn_net N], [wfn_well_formed N] read
+   naturally. *)
+Arguments wfn_net {A Ar} _.
+Arguments wfn_well_formed {A Ar} _.
+Arguments mkWfNet {A Ar} _ _.
+
+(**************************************************************************)
+(** ** net_iso is an equivalence (on well-formed nets) *)
+
+(** [net_iso] is an equivalence relation on well-formed nets: it is reflexive
+    and transitive on all nets, and symmetric when the source is well-formed
+    ([net_iso_symmetric]). The [Equivalence] class carries all three
+    properties, so the instance is registered over [WfNet] (the subtype of
+    well-formed nets), where symmetry is available. *)
+
+(** The [Prop]-valued form of [net_iso] on well-formed nets. The [net_iso]
+    record itself lives in [Set] (it carries the map [ni_map : nat -> nat]),
+    while [Equivalence] requires a [Prop]-valued relation; this definition
+    states the same three clauses with the map existentially quantified.
+    [net_iso_to_on_wfnet] translates the record form to this one. The reverse
+    direction is not a standalone lemma (the witness map cannot be extracted
+    from a [Prop] existential into a [Set] record), but it is used internally
+    in [net_iso_equivalence], where the goal is [Prop] and the destructed
+    witness map can be rebuilt into a record. *)
+Definition net_iso_on_wfnet (A : Type) (Ar : A -> nat) (N1 N2 : WfNet A Ar) : Prop :=
+  exists (f : nat -> nat),
+    Permutation (map (fun p => (f (fst p), snd p)) (nt_agents (wfn_net N1)))
+                (nt_agents (wfn_net N2))
+    /\ (forall a1 a2,
+         has_agent A (wfn_net N1) a1 -> has_agent A (wfn_net N1) a2
+         -> f a1 = f a2 -> a1 = a2)
+    /\ Permutation (map (fun l => ((f (fst (fst l)), snd (fst l)),
+                                   (f (fst (snd l)), snd (snd l))))
+                      (nt_links (wfn_net N1)))
+                  (nt_links (wfn_net N2)).
+
+(** The record form implies the [Prop] form: the witness map is [ni_map]. *)
+Lemma net_iso_to_on_wfnet (A : Type) (Ar : A -> nat) (N1 N2 : WfNet A Ar)
+      (H : net_iso A Ar (wfn_net N1) (wfn_net N2)) :
+  net_iso_on_wfnet A Ar N1 N2.
+Proof.
+  exists (ni_map H).
+  split.
+  - exact (ni_agents H).
+  - split.
+    + exact (ni_inj H).
+    + exact (ni_links H).
+Qed.
+
+Instance net_iso_equivalence (A : Type) (Ar : A -> nat) :
+  Equivalence (net_iso_on_wfnet A Ar).
+Proof.
+  split.
+  - (* reflexive: the identity map. *)
+    intros N.
+    apply (net_iso_to_on_wfnet A Ar N N).
+    apply (net_iso_reflexive A Ar (wfn_net N)).
+  - (* symmetric: unpack the witness map, rebuild the record, and apply
+       [net_iso_symmetric] (which needs the source well-formed). The goal is
+       [Prop], so destructing the existential is a legal elimination. *)
+    intros N1 N2 H.
+    destruct H as [f [Ha [Hi Hl]]].
+    assert (Hrec : net_iso A Ar (wfn_net N1) (wfn_net N2)).
+    { refine (mkNetIso f _ _ _).
+      - exact Ha.
+      - exact Hi.
+      - exact Hl. }
+    apply (net_iso_to_on_wfnet A Ar N2 N1).
+    apply (net_iso_symmetric A Ar (wfn_net N1) (wfn_net N2) Hrec).
+    exact (wfn_well_formed N1).
+  - (* transitive: unpack both witness maps and rebuild both records. *)
+    intros N1 N2 N3 H12 H23.
+    destruct H12 as [f12 [Ha12 [Hi12 Hl12]]].
+    destruct H23 as [f23 [Ha23 [Hi23 Hl23]]].
+    assert (Hrec12 : net_iso A Ar (wfn_net N1) (wfn_net N2)).
+    { refine (mkNetIso f12 _ _ _).
+      - exact Ha12.
+      - exact Hi12.
+      - exact Hl12. }
+    assert (Hrec23 : net_iso A Ar (wfn_net N2) (wfn_net N3)).
+    { refine (mkNetIso f23 _ _ _).
+      - exact Ha23.
+      - exact Hi23.
+      - exact Hl23. }
+    apply (net_iso_to_on_wfnet A Ar N1 N3).
+    apply (net_iso_transitive A Ar (wfn_net N1) (wfn_net N2) (wfn_net N3)
+           Hrec12 Hrec23).
+Qed.
+
+(**************************************************************************)
+(** ** Label and port preservation under an isomorphism *)
+
+(** [net_iso] preserves agent labels: for an agent [a] of [N1], the label of
+    [ni_map H a] in [N2] is the label of [a] in [N1]. The well-formedness of
+    [N1] (unique agent ids) is what makes the label well-defined and lets the
+    argument go through: any occurrence of the id [ni_map H a] in [N2]'s
+    agent list is the image of the unique occurrence of [a] in [N1]'s. *)
+Lemma net_iso_label (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (Hwf : well_formed A Ar N1)
+      (a : nat) (Ha : has_agent A N1 a) :
+  agent_label A N2 (ni_map H a) = agent_label A N1 a.
+Proof.
+  set (f := ni_map H).
+  set (agentmap := fun p : nat * A => (f (fst p), snd p)).
+  destruct (agent_label A N1 a) as [la|] eqn:Hlook.
+  - (* Hlook : agent_label N1 a = Some la; the goal is already
+       [agent_label N2 (f a) = Some la] (the destructed term was rewritten). *)
+    assert (Hagent : In (a, la) (nt_agents N1)).
+    { exact (agent_label_Some_In A N1 a la Hlook). }
+    assert (Himg : In (f a, la) (map agentmap (nt_agents N1))).
+    { apply (In_map agentmap (nt_agents N1) (a, la)). exact Hagent. }
+    assert (Hn2 : In (f a, la) (nt_agents N2)).
+    { apply (Permutation_in _ (ni_agents H)) in Himg. exact Himg. }
+    apply (agent_label_lookup_In A (f a) (nt_agents N2) la Hn2).
+    intros l1 l2 H1 H2.
+    apply (Permutation_in _ (Permutation_sym (ni_agents H))) in H1.
+    apply (Permutation_in _ (Permutation_sym (ni_agents H))) in H2.
+    apply In_map_inv in H1 as [p1 [Hp1 Hf1]].
+    apply In_map_inv in H2 as [p2 [Hp2 Hf2]].
+    destruct p1 as [a1 la1].
+    destruct p2 as [a2 la2].
+    injection Hf1 as Hf1a Hf1l.
+    injection Hf2 as Hf2a Hf2l.
+    subst l1 l2.
+    assert (Ha1 : has_agent A N1 a1).
+    { apply (proj2 (has_agent_In A N1 a1)).
+      apply (In_map fst (nt_agents N1) (a1, la1)).
+      exact Hp1. }
+    assert (Ha2 : has_agent A N1 a2).
+    { apply (proj2 (has_agent_In A N1 a2)).
+      apply (In_map fst (nt_agents N1) (a2, la2)).
+      exact Hp2. }
+    assert (Heq1 : a1 = a).
+    { exact (ni_inj H a1 a Ha1 Ha Hf1a). }
+    assert (Heq2 : a2 = a).
+    { exact (ni_inj H a2 a Ha2 Ha Hf2a). }
+    subst a1 a2.
+    exact (wf_ids_functional Hwf a la1 la2 Hp1 Hp2).
+  - (* Hlook : agent_label N1 a = None: impossible, [a] is an agent of [N1]. *)
+    exfalso.
+    apply Ha.
+    exact Hlook.
+Qed.
+
+(** [net_iso] preserves port usage: for an agent [a] of [N1], the port [p] is
+    an end of some link of [N1] iff it is an end of some link of [N2] at agent
+    [ni_map H a]. The forward direction follows a link of [N1] to its image in
+    [N2]; the backward direction pulls a link of [N2] back to its unique
+    preimage in [N1] (the link map is injective on the links of a well-formed
+    [N1], by [ni_inj] on the link endpoints, which [wf_links] guarantees are
+    agents). *)
+Lemma net_iso_port_used (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (Hwf : well_formed A Ar N1)
+      (a : nat) (Ha : has_agent A N1 a) (p : nat) :
+  port_used A N1 (a, p) <-> port_used A N2 (ni_map H a, p).
+Proof.
+  set (f := ni_map H).
+  set (imgf := fun l : (nat * nat) * (nat * nat) =>
+                 ((f (fst (fst l)), snd (fst l)),
+                  (f (fst (snd l)), snd (snd l)))).
+  split.
+  - (* forward: a link of [N1] ending at (a,p) maps to a link of [N2]
+       ending at (f a, p). *)
+    intro Hpu1.
+    destruct Hpu1 as [l1 [Hl1 Hle1]].
+    exists (imgf l1).
+    split.
+    + apply (Permutation_in _ (ni_links H)).
+      apply (In_map imgf (nt_links N1) l1).
+      exact Hl1.
+    + destruct l1 as [[a1 p1] [b1 q1]].
+      destruct Hle1 as [Hle1|Hle1].
+      * (* fst l1 = (a, p) *)
+        injection Hle1 as Hap Hpp.
+        subst a1 p1.
+        left.
+        reflexivity.
+      * (* snd l1 = (a, p) *)
+        injection Hle1 as Hap Hpp.
+        subst b1 q1.
+        right.
+        reflexivity.
+  - (* backward: a link of [N2] ending at (f a, p) has a unique preimage link
+       of [N1] ending at (a, p). *)
+    intro Hpu2.
+    destruct Hpu2 as [l2 [Hl2 Hle2]].
+    apply (Permutation_in _ (Permutation_sym (ni_links H))) in Hl2.
+    apply In_map_inv in Hl2 as [l1 [Hl1 Hle1]].
+    subst l2.
+    destruct l1 as [[a1 p1] [b1 q1]].
+    destruct Hle2 as [Hle2|Hle2].
+    * (* (f a, p) = (f a1, p1) *)
+      injection Hle2 as Hfa Hpa.
+      subst p.
+      assert (Ha1 : has_agent A N1 a1).
+      { destruct (wf_links Hwf a1 b1 p1 q1 Hl1) as [Ha1 _]. exact Ha1. }
+      assert (Heq : a = a1).
+      { exact (ni_inj H a a1 Ha Ha1 (eq_sym Hfa)). }
+      exists ((a1, p1), (b1, q1)).
+      split.
+      + exact Hl1.
+      + subst a1.
+        left.
+        reflexivity.
+    * (* (f a, p) = (f b1, q1) *)
+      injection Hle2 as Hfa Hpa.
+      subst p.
+      assert (Hb1 : has_agent A N1 b1).
+      { destruct (wf_links Hwf a1 b1 p1 q1 Hl1) as [_ [Hb1 _]]. exact Hb1. }
+      assert (Heq : a = b1).
+      { exact (ni_inj H a b1 Ha Hb1 (eq_sym Hfa)). }
+      exists ((a1, p1), (b1, q1)).
+      split.
+      + exact Hl1.
+      + subst b1.
+        right.
+        reflexivity.
+Qed.
+
+(** [net_iso] preserves freeness of ports: for an agent [a] of [N1] and any
+    port [p], [p] is a free port of [a] in [N1] iff it is a free port of
+    [ni_map H a] in [N2]. The three ingredients of [is_free] are each carried
+    over: the label ([net_iso_label]), the arity bound (the same label), and
+    port usage ([net_iso_port_used]). This is the core fact behind
+    [net_iso_pres_interface]. *)
+Lemma net_iso_is_free (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (Hwf : well_formed A Ar N1)
+      (a : nat) (Ha : has_agent A N1 a) (p : nat) :
+  is_free A Ar N1 (a, p) <-> is_free A Ar N2 (ni_map H a, p).
+Proof.
+  set (f := ni_map H).
+  split.
+  - (* forward *)
+    intro Hf1.
+    destruct Hf1 as [la [Hal [Hrange Hpu]]].
+    exists la.
+    split.
+    + rewrite <- Hal.
+      exact (net_iso_label A Ar N1 N2 H Hwf a Ha).
+    + split.
+      * exact Hrange.
+      * intro Hpu2.
+        apply Hpu.
+        exact (proj2 (net_iso_port_used A Ar N1 N2 H Hwf a Ha p) Hpu2).
+  - (* backward *)
+    intro Hf2.
+    destruct Hf2 as [la [Hal [Hrange Hpu]]].
+    exists la.
+    split.
+    + change (agent_label A N1 a = Some la).
+      rewrite <- (net_iso_label A Ar N1 N2 H Hwf a Ha).
+      exact Hal.
+    + split.
+      * exact Hrange.
+      * intro Hpu1.
+        apply Hpu.
+        exact (proj1 (net_iso_port_used A Ar N1 N2 H Hwf a Ha p) Hpu1).
+Qed.
+
+(**************************************************************************)
+(** ** Preservation of well-formedness, active pairs, and the interface *)
+
+(** A well-formed net is mapped to a well-formed net by an isomorphism: each
+    of the four well-formedness conditions is carried along by the agent and
+    link permutations. Unique ids survive because [ni_map] is injective on the
+    source agent set ([ni_inj]); valid links survive because a link of [N2]
+    pulls back to a valid link of [N1]; port-injectivity and distinct ends
+    survive because the link map is a bijection on the links of a well-formed
+    net. (§4.2: the net invariants are invariant under renaming.) *)
+Lemma net_iso_pres_wf (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (Hwf : well_formed A Ar N1) :
+  well_formed A Ar N2.
+Proof.
+  set (f := ni_map H).
+  set (agentmap := fun p : nat * A => (f (fst p), snd p)).
+  set (imgf := fun l : (nat * nat) * (nat * nat) =>
+                 ((f (fst (fst l)), snd (fst l)),
+                  (f (fst (snd l)), snd (snd l)))).
+  refine (mkWellFormed A Ar N2 _ _ _ _).
+  - (* wf_ids: NoDup (map fst (nt_agents N2)) *)
+    assert (Hperm : Permutation (map (fun p : nat * A => f (fst p)) (nt_agents N1))
+                                 (map fst (nt_agents N2))).
+    { assert (Heq : map (fun p : nat * A => fst p) (map agentmap (nt_agents N1))
+                       = map (fun p : nat * A => f (fst p)) (nt_agents N1)).
+      { now rewrite (map_comp (fun p : nat * A => fst p) agentmap (nt_agents N1)). }
+      rewrite <- Heq.
+      apply (Permutation_map (fun p : nat * A => fst p) (ni_agents H)). }
+    apply (Permutation_NoDup Hperm).
+    rewrite <- (map_comp f fst (nt_agents N1)).
+    apply Injective_map_NoDup_in.
+    + intros x y Hx Hy Hf.
+      assert (Hax : has_agent A N1 x).
+      { apply (proj2 (has_agent_In A N1 x)). exact Hx. }
+      assert (Hay : has_agent A N1 y).
+      { apply (proj2 (has_agent_In A N1 y)). exact Hy. }
+      exact (ni_inj H x y Hax Hay Hf).
+    + exact (wf_ids Hwf).
+  - (* wf_links *)
+    intros a b p q Hl.
+    apply (Permutation_in _ (Permutation_sym (ni_links H))) in Hl.
+    apply In_map_inv in Hl as [l [Hl1 Hle]].
+    destruct l as [[a1 p1] [b1 q1]].
+    change (((f a1, p1), (f b1, q1)) = (a, p, (b, q))) in Hle.
+    inversion Hle.
+    destruct (wf_links Hwf a1 b1 p1 q1 Hl1) as [Ha1 [Hb1 Hbounds]].
+    split.
+    + exact (net_iso_agent_fwd A Ar N1 N2 H a1 Ha1).
+    + split.
+      * exact (net_iso_agent_fwd A Ar N1 N2 H b1 Hb1).
+      * intros la lb Hal Halb.
+        change (agent_label A N2 (ni_map H a1) = Some la) in Hal.
+        change (agent_label A N2 (ni_map H b1) = Some lb) in Halb.
+        assert (Hla : agent_label A N1 a1 = Some la).
+        { rewrite (net_iso_label A Ar N1 N2 H Hwf a1 Ha1) in Hal.
+          exact Hal. }
+        assert (Hlb : agent_label A N1 b1 = Some lb).
+        { rewrite (net_iso_label A Ar N1 N2 H Hwf b1 Hb1) in Halb.
+          exact Halb. }
+        rewrite <- H2, <- H4.
+        exact (Hbounds la lb Hla Hlb).
+  - (* wf_ports *)
+    intros pr l1 l2 Hl1 Hl2 Hneq.
+    intro Hcontra.
+    destruct Hcontra as [Hl1pr Hl2pr].
+    apply (Permutation_in _ (Permutation_sym (ni_links H))) in Hl1.
+    apply (Permutation_in _ (Permutation_sym (ni_links H))) in Hl2.
+    apply In_map_inv in Hl1 as [l1' [Hl1' Hle1]].
+    apply In_map_inv in Hl2 as [l2' [Hl2' Hle2]].
+    destruct l1' as [[a1 p1] [b1 q1]].
+    destruct l2' as [[a2 p2] [b2 q2]].
+    subst l1 l2.
+    assert (Ha1 : has_agent A N1 a1).
+    { exact (proj1 (wf_link_agents A Ar N1 Hwf a1 b1 p1 q1 Hl1')). }
+    assert (Hb1 : has_agent A N1 b1).
+    { exact (proj2 (wf_link_agents A Ar N1 Hwf a1 b1 p1 q1 Hl1')). }
+    assert (Ha2 : has_agent A N1 a2).
+    { exact (proj1 (wf_link_agents A Ar N1 Hwf a2 b2 p2 q2 Hl2')). }
+    assert (Hb2 : has_agent A N1 b2).
+    { exact (proj2 (wf_link_agents A Ar N1 Hwf a2 b2 p2 q2 Hl2')). }
+    assert (Hneq' : ((a1, p1), (b1, q1)) <> ((a2, p2), (b2, q2))).
+    { intro Heq.
+      exfalso.
+      apply Hneq.
+      change (imgf ((a1, p1), (b1, q1)) = imgf ((a2, p2), (b2, q2))).
+      f_equal.
+      exact Heq. }
+    destruct Hl1pr as [Hl1pr|Hl1pr]; destruct Hl2pr as [Hl2pr|Hl2pr].
+    + (* pr = (f a1, p1) = (f a2, p2) *)
+      change ((f a1, p1) = pr) in Hl1pr.
+      change ((f a2, p2) = pr) in Hl2pr.
+      assert (Heq : (f a1, p1) = (f a2, p2)).
+      { rewrite Hl1pr, <- Hl2pr. reflexivity. }
+      injection Heq as Hfa Hpa.
+      subst p2.
+      assert (Heq' : a1 = a2).
+      { exact (ni_inj H a1 a2 Ha1 Ha2 Hfa). }
+      subst a2.
+      exfalso.
+      apply (wf_ports Hwf (a1, p1) ((a1, p1), (b1, q1)) ((a1, p1), (b2, q2))
+                      Hl1' Hl2' Hneq').
+      split; [left; reflexivity | left; reflexivity].
+    + (* pr = (f a1, p1) = (f b2, q2) *)
+      change ((f a1, p1) = pr) in Hl1pr.
+      change ((f b2, q2) = pr) in Hl2pr.
+      assert (Heq : (f a1, p1) = (f b2, q2)).
+      { rewrite Hl1pr, <- Hl2pr. reflexivity. }
+      injection Heq as Hfa Hpa.
+      subst q2.
+      assert (Heq' : a1 = b2).
+      { exact (ni_inj H a1 b2 Ha1 Hb2 Hfa). }
+      subst b2.
+      exfalso.
+      apply (wf_ports Hwf (a1, p1) ((a1, p1), (b1, q1)) ((a2, p2), (a1, p1))
+                      Hl1' Hl2' Hneq').
+      split; [left; reflexivity | right; reflexivity].
+    + (* pr = (f b1, q1) = (f a2, p2) *)
+      change ((f b1, q1) = pr) in Hl1pr.
+      change ((f a2, p2) = pr) in Hl2pr.
+      assert (Heq : (f b1, q1) = (f a2, p2)).
+      { rewrite Hl1pr, <- Hl2pr. reflexivity. }
+      injection Heq as Hfa Hqa.
+      subst p2.
+      assert (Heq' : b1 = a2).
+      { exact (ni_inj H b1 a2 Hb1 Ha2 Hfa). }
+      subst a2.
+      exfalso.
+      apply (wf_ports Hwf (b1, q1) ((a1, p1), (b1, q1)) ((b1, q1), (b2, q2))
+                      Hl1' Hl2' Hneq').
+      split; [right; reflexivity | left; reflexivity].
+    + (* pr = (f b1, q1) = (f b2, q2) *)
+      change ((f b1, q1) = pr) in Hl1pr.
+      change ((f b2, q2) = pr) in Hl2pr.
+      assert (Heq : (f b1, q1) = (f b2, q2)).
+      { rewrite Hl1pr, <- Hl2pr. reflexivity. }
+      injection Heq as Hfa Hqa.
+      subst q2.
+      assert (Heq' : b1 = b2).
+      { exact (ni_inj H b1 b2 Hb1 Hb2 Hfa). }
+      subst b2.
+      exfalso.
+      apply (wf_ports Hwf (b1, q1) ((a1, p1), (b1, q1)) ((a2, p2), (b1, q1))
+                      Hl1' Hl2' Hneq').
+      split; [right; reflexivity | right; reflexivity].
+  - (* wf_ends *)
+    intros l Hl.
+    intro Heq.
+    apply (Permutation_in _ (Permutation_sym (ni_links H))) in Hl.
+    apply In_map_inv in Hl as [l1 [Hl1 Hle]].
+    destruct l1 as [[a1 p1] [b1 q1]].
+    subst l.
+    injection Heq as Hfa Hpa.
+    assert (Ha1 : has_agent A N1 a1).
+    { exact (proj1 (wf_link_agents A Ar N1 Hwf a1 b1 p1 q1 Hl1)). }
+    assert (Hb1 : has_agent A N1 b1).
+    { exact (proj2 (wf_link_agents A Ar N1 Hwf a1 b1 p1 q1 Hl1)). }
+    assert (Heq1 : a1 = b1).
+    { exact (ni_inj H a1 b1 Ha1 Hb1 Hfa). }
+    assert (Hends : (a1, p1) = (b1, q1)).
+    { f_equal.
+      + exact Heq1.
+      + exact Hpa. }
+    exfalso.
+    apply (wf_ends Hwf ((a1, p1), (b1, q1)) Hl1).
+    exact Hends.
+Qed.
+
+(** [net_iso] preserves active pairs: if [a] and [b] form an active pair in
+    [N1], then their images form an active pair in [N2]. Distinctness survives
+    by [ni_inj] (the images of two distinct agents of [N1] differ); the agent
+    conditions survive by [net_iso_agent_fwd]; and the link between port 0 of
+    [a] and port 0 of [b] is carried to the corresponding link of [N2] by the
+    link permutation [ni_links]. (§4.3: reduction steps are preserved.) *)
+Lemma net_iso_pres_active_pair (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (a b : nat) :
+  is_active_pair A Ar N1 a b -> is_active_pair A Ar N2 (ni_map H a) (ni_map H b).
+Proof.
+  set (f := ni_map H).
+  set (imgf := fun l : (nat * nat) * (nat * nat) =>
+                 ((f (fst (fst l)), snd (fst l)),
+                  (f (fst (snd l)), snd (snd l)))).
+  intro Hap.
+  destruct Hap as [Hneq [Haa [Hba Hablink]]].
+  unfold is_active_pair.
+  refine (conj _ (conj _ (conj _ _))).
+  - (* f a <> f b: the images of two distinct agents of [N1] differ. *)
+    intro Heq.
+    apply Hneq.
+    exact (ni_inj H a b Haa Hba Heq).
+  - exact (net_iso_agent_fwd A Ar N1 N2 H a Haa).
+  - exact (net_iso_agent_fwd A Ar N1 N2 H b Hba).
+  - (* the link (a,0)-(b,0) of [N1] maps to the link (f a,0)-(f b,0) of [N2]. *)
+    destruct Hablink as [Hl|Hl].
+    + left.
+      apply (Permutation_in _ (ni_links H)).
+      apply (In_map imgf (nt_links N1) ((a, 0), (b, 0))).
+      exact Hl.
+    + right.
+      apply (Permutation_in _ (ni_links H)).
+      apply (In_map imgf (nt_links N1) ((b, 0), (a, 0))).
+      exact Hl.
+Qed.
+
+(** [net_iso] preserves the interface: the free ports of [N1], with their agent
+    ids renamed by [ni_map], are exactly the free ports of [N2] (as a
+    [Permutation]). The forward direction sends a free port of [N1] to its
+    image, which is free in [N2] by [net_iso_is_free]; the backward direction
+    pulls a free port of [N2] back to the unique free port of [N1] mapping to
+    it (surjectivity of [ni_map] on agents, [net_iso_surj]). Both interfaces
+    are duplicate-free, so the elementwise inclusion yields a [Permutation].
+    (§4.3: the observable boundary of the net is invariant under renaming.) *)
+Lemma net_iso_pres_interface (A : Type) (Ar : A -> nat) (N1 N2 : Net A)
+      (H : net_iso A Ar N1 N2) (Hwf : well_formed A Ar N1) :
+  Permutation (map (fun pr : port_ref => (ni_map H (fst pr), snd pr))
+                  (interface A Ar N1))
+              (interface A Ar N2).
+Proof.
+  set (f := ni_map H).
+  set (mapf := fun pr : port_ref => (f (fst pr), snd pr)).
+  assert (Hwf2 : well_formed A Ar N2).
+  { exact (net_iso_pres_wf A Ar N1 N2 H Hwf). }
+  (* forward: a free port of [N1] maps to a free port of [N2]. *)
+  assert (Hfwd : forall pr, In pr (interface A Ar N1) -> In (mapf pr) (interface A Ar N2)).
+  { intros pr Hin.
+    destruct pr as [a p].
+    assert (Hfree : is_free A Ar N1 (a, p)).
+    { exact (interface_free A Ar N1 Hwf (a, p) Hin). }
+    destruct Hfree as [la [Hal Hrest]].
+    destruct Hrest as [Hrange Hpu].
+    assert (Ha : has_agent A N1 a).
+    { unfold has_agent.
+      intro Hnone.
+      change (agent_label A N1 a = Some la) in Hal.
+      rewrite Hal in Hnone.
+      discriminate Hnone. }
+    apply (free_in_interface A Ar N2 Hwf2 (f a, p)).
+    apply (proj1 (net_iso_is_free A Ar N1 N2 H Hwf a Ha p)).
+    exists la.
+    split.
+    + exact Hal.
+    + split.
+      * exact Hrange.
+      * exact Hpu. }
+  (* backward: a free port of [N2] is the image of a free port of [N1]. *)
+  assert (Hbwd : forall pr, In pr (interface A Ar N2) ->
+                         exists pr', In pr' (interface A Ar N1) /\ mapf pr' = pr).
+  { intros pr Hin.
+    assert (Hfree : is_free A Ar N2 pr).
+    { exact (interface_free A Ar N2 Hwf2 pr Hin). }
+    destruct Hfree as [la [Hal Hrest]].
+    destruct Hrest as [Hrange Hpu].
+    destruct pr as [b q].
+    assert (Ha2 : has_agent A N2 b).
+    { unfold has_agent.
+      intro Hnone.
+      change (agent_label A N2 b = Some la) in Hal.
+      rewrite Hal in Hnone.
+      discriminate Hnone. }
+    destruct (net_iso_surj A Ar N1 N2 H b Ha2) as [a [Ha1 Heq]].
+    change (f a = b) in Heq.
+    exists (a, q).
+    split.
+    - (* (a, q) is a free port of [N1]. *)
+      apply (free_in_interface A Ar N1 Hwf (a, q)).
+      apply (proj2 (net_iso_is_free A Ar N1 N2 H Hwf a Ha1 q)).
+      exists la.
+      split.
+      + change (agent_label A N2 (f a) = Some la).
+        rewrite Heq.
+        exact Hal.
+      + split.
+        * exact Hrange.
+        * change (~ port_used A N2 (f a, q)).
+          rewrite Heq.
+          exact Hpu.
+    - (* mapf (a, q) = (b, q). *)
+      change ((f a, q) = (b, q)).
+      rewrite Heq.
+      reflexivity. }
+  (* [mapf] is injective on the interface of [N1] (its agent ids are unique). *)
+  assert (Hinj : forall x y, In x (interface A Ar N1) -> In y (interface A Ar N1) ->
+                         mapf x = mapf y -> x = y).
+  { intros x y Hx Hy Hmfeq.
+    destruct x as [a1 p1].
+    destruct y as [a2 p2].
+    assert (Hfree1 : is_free A Ar N1 (a1, p1)).
+    { exact (interface_free A Ar N1 Hwf (a1, p1) Hx). }
+    assert (Hfree2 : is_free A Ar N1 (a2, p2)).
+    { exact (interface_free A Ar N1 Hwf (a2, p2) Hy). }
+    destruct Hfree1 as [la1 [Hal1 _]].
+    destruct Hfree2 as [la2 [Hal2 _]].
+    assert (Ha1 : has_agent A N1 a1).
+    { unfold has_agent. intro Hn.
+      change (agent_label A N1 a1 = Some la1) in Hal1.
+      rewrite Hal1 in Hn. discriminate Hn. }
+    assert (Ha2 : has_agent A N1 a2).
+    { unfold has_agent. intro Hn.
+      change (agent_label A N1 a2 = Some la2) in Hal2.
+      rewrite Hal2 in Hn. discriminate Hn. }
+    change ((f a1, p1) = (f a2, p2)) in Hmfeq.
+    injection Hmfeq as Hfa Hpa.
+    subst p2.
+    assert (Heq : a1 = a2).
+    { exact (ni_inj H a1 a2 Ha1 Ha2 Hfa). }
+    subst a2.
+    reflexivity. }
+  (* the image list is duplicate-free. *)
+  assert (Hnodupm : NoDup (map mapf (interface A Ar N1))).
+  { apply Injective_map_NoDup_in.
+    + exact Hinj.
+    + exact (interface_nodup A Ar N1 Hwf). }
+  (* both lists are duplicate-free and elementwise equivalent: a [Permutation]. *)
+  apply NoDup_Permutation.
+  - exact Hnodupm.
+  - exact (interface_nodup A Ar N2 Hwf2).
+  - intros y.
+    split.
+    + (* In y (map mapf (interface N1)) -> In y (interface N2) *)
+      intro Hy.
+      apply In_map_inv in Hy as [pr [Hpr Hye]].
+      subst y.
+      exact (Hfwd pr Hpr).
+    + (* In y (interface N2) -> In y (map mapf (interface N1)) *)
+      intro Hy.
+      destruct (Hbwd y Hy) as [pr [Hpr Hye]].
+      subst y.
+      apply (In_map mapf (interface A Ar N1) pr).
+      exact Hpr.
 Qed.
