@@ -14,6 +14,7 @@ Require Import Stdlib.Arith.PeanoNat.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Lists.Finite.
+Require Import Stdlib.Sorting.Permutation.
 Require Import Stdlib.micromega.Lia.
 Require Import Net.
 Require Import Agent.
@@ -3117,3 +3118,2713 @@ Proof.
   apply (net_iso_pres_active_pair A Ar (raw_splice A Ar N a b r) N' Hiso c d).
   apply (raw_splice_pres_pair A Ar N a b c d r Hwf Hap_ab Hap_cd Hdisj).
 Qed.
+
+(**************************************************************************)
+(** ** Disjoint-pair commutation (§4.7) *)
+
+(** [shift a b x] is the signed translation [x + (a - b)] computed in [nat]:
+    it adds [a - b] when [a >= b] and subtracts [b - a] otherwise. The two
+    double-splices in [step_commuting] freshen the same RHS relative to
+    different base maxima, so the corresponding agents differ by a possibly
+    negative shift; [shift] makes that translation total. *)
+Definition shift (a b x : nat) : nat :=
+  if Nat.leb b a then x + (a - b) else x - (b - a).
+
+(** The renaming witnessing [step_commuting]. With
+    [M = max_agent_id N], [M1 = max_agent_id (raw_splice N a b r1)],
+    [M2 = max_agent_id (raw_splice N c d r2)], the agents of
+    [raw_splice (raw_splice N a b r1) c d r2] split into three id-disjoint
+    blocks: the common agents of [N] (ids [<= min M M1]), the freshened
+    [r1]-RHS agents (ids in [(min M M1, M1]], present only when [M1 > M]),
+    and the freshened [r2]-RHS agents (ids [> M1]). The map is the identity
+    on the common block, shifts the [r1]-RHS block by [M2 - M] (landing it on
+    the [r1]-RHS block of the other order), and shifts the [r2]-RHS block by
+    [M - M1] (landing it on the [r2]-RHS block of the other order). *)
+Definition comm_map (M M1 M2 : nat) (x : nat) : nat :=
+  if Nat.leb x (Nat.min M M1) then x
+  else if Nat.leb x M1 then shift M2 M x
+  else shift M M1 x.
+
+(** A freshened id of [N] is strictly greater than every agent id of [N]. *)
+Lemma fresh_id_above_all (A : Type) (N : Net A) (x y : nat) :
+  has_agent A N y -> fresh_id A N x > y.
+Proof.
+  intros Hy.
+  apply (proj1 (has_agent_In A N y)) in Hy.
+  specialize (list_max_upper_bound (map fst (nt_agents N)) y Hy) as Hle.
+  unfold fresh_id, max_agent_id in *. lia.
+Qed.
+
+(** Filtering the freshened RHS agents of [r] (relative to [N]) by "id not in
+    {[c, d]}\" keeps them all: every freshened id is above every agent id of
+    [N], in particular above [c] and [d]. *)
+Lemma splice_keep_keeps_fresh (A : Type) (N : Net A) (c d : nat) (r : Rule A)
+      (Hc : has_agent A N c) (Hd : has_agent A N d) :
+  filter (fun p : nat * A => negb (Nat.eqb (fst p) c) && negb (Nat.eqb (fst p) d))
+      (map (fun p => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r)))
+  = map (fun p => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r)).
+Proof.
+  set (P := fun p : nat * A => negb (Nat.eqb (fst p) c) && negb (Nat.eqb (fst p) d)).
+  set (L := map (fun p => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r))).
+  assert (Hext : filter P L = filter (fun _ : nat * A => true) L).
+  { apply (filter_ext_in P (fun _ : nat * A => true) L).
+    intros p Hp.
+    apply (proj1 (in_map_iff (fun q : nat * A => (fresh_id A N (fst q), snd q))
+           (nt_agents (ru_rhs r)) p)) in Hp.
+    destruct Hp as [q [Hpq Hq]].
+    subst p.
+    change (negb (Nat.eqb (fresh_id A N (fst q)) c) && negb (Nat.eqb (fresh_id A N (fst q)) d) = true).
+    apply (proj2 (andb_true_iff _ _)); split.
+    - apply (proj2 (negb_true_iff _)).
+      destruct (Nat.eqb (fresh_id A N (fst q)) c) eqn:Hb.
+      + exfalso.
+        apply (proj1 (Nat.eqb_eq (fresh_id A N (fst q)) c)) in Hb.
+        assert (Hgt : fresh_id A N (fst q) > c).
+        { exact (fresh_id_above_all A N (fst q) c Hc). }
+        rewrite <- Hb in Hgt. lia.
+      + reflexivity.
+    - apply (proj2 (negb_true_iff _)).
+      destruct (Nat.eqb (fresh_id A N (fst q)) d) eqn:Hb.
+      + exfalso.
+        apply (proj1 (Nat.eqb_eq (fresh_id A N (fst q)) d)) in Hb.
+        assert (Hgt : fresh_id A N (fst q) > d).
+        { exact (fresh_id_above_all A N (fst q) d Hd). }
+        rewrite <- Hb in Hgt. lia.
+      + reflexivity. }
+  rewrite Hext.
+  apply filter_true.
+Qed.
+
+(**************************************************************************)
+(** ** Disjoint-pair commutation: the isomorphism witness (§4.7) *)
+
+(** Reducing two DISJOINT active pairs commutes up to renaming: the two
+    double-splices [raw_splice (raw_splice N a b r1) c d r2] and
+    [raw_splice (raw_splice N c d r2) a b r1] are isomorphic. This Section
+    builds that isomorphism as a [net_iso] record, witnessing
+    [step_commuting].
+
+    The agents of the first double-splice split into three id-disjoint blocks:
+    the COMMON agents of [N] (those other than [a, b, c, d]), the freshened
+    [r1]-RHS agents, and the freshened [r2]-RHS agents. The second
+    double-splice has the same three blocks, with the [r1]- and [r2]-RHS
+    blocks freshened relative to different base maxima. [comm_map] is the
+    identity on the common block and a (possibly negative) shift on each RHS
+    block, landing it on the corresponding block of the other order. The
+    links follow by the endpoint-rewiring facts. *)
+
+Section Commutation.
+  Variable (A : Type) (Ar : A -> nat) (N : Net A) (a b c d : nat) (r1 r2 : Rule A).
+  Hypothesis Hwf : well_formed A Ar N.
+  Hypothesis Hap_ab : is_active_pair A Ar N a b.
+  Hypothesis Hap_cd : is_active_pair A Ar N c d.
+  Hypothesis Hdisj : a <> c /\ a <> d /\ b <> c /\ b <> d.
+
+  (* The two rules are valid in the usual sense: their RHS is well-formed and
+     their declared interface is the RHS's free ports (the [sys_valid_wf] and
+     [sys_valid_iface] conjuncts). The orientation premises pin each fired
+     agent to its role in the rule's LHS (as [step_intro] does). Together they
+     ensure that every kept link endpoint on [a b c d] is in the rewiring
+     range, and that every freshened endpoint id is an agent id of the
+     corresponding RHS. *)
+  Hypothesis Hr1 : well_formed A Ar (ru_rhs r1).
+  Hypothesis Hr2 : well_formed A Ar (ru_rhs r2).
+  Hypothesis Hi1 : ru_iface r1 = interface A Ar (ru_rhs r1).
+  Hypothesis Hi2 : ru_iface r2 = interface A Ar (ru_rhs r2).
+  Hypothesis Hol1 : agent_label A N a = Some (fst (ru_lhs r1)).
+  Hypothesis Hol2 : agent_label A N b = Some (snd (ru_lhs r1)).
+  Hypothesis Hol3 : agent_label A N c = Some (fst (ru_lhs r2)).
+  Hypothesis Hol4 : agent_label A N d = Some (snd (ru_lhs r2)).
+
+  (* The declared interface of [r1] covers its full boundary: its length is at
+     least the sum of the arities of the two LHS labels (the [sys_valid_len]
+     conjunct, as an inequality). This ensures that the [nth] lookups in
+     [rewire_endpoint] hit real interface entries for every in-range boundary
+     port of [r1], so the freshened endpoint ids are agent ids of the RHS.
+     (No analogous premise is needed for [r2]: the corresponding [comm_map]
+     direction, [cm_fresh2p], is unconditional.) *)
+  Hypothesis Hlen1 : Ar (fst (ru_lhs r1)) + Ar (snd (ru_lhs r1)) <= length (ru_iface r1).
+
+  (* The four agents of the two pairs are present in [N], and each pair is
+     joined by its main–main link. *)
+  Local Lemma Ha : has_agent A N a.
+  Proof. exact (proj1 (proj2 Hap_ab)). Qed.
+  Local Lemma Hb : has_agent A N b.
+  Proof. exact (proj1 (proj2 (proj2 Hap_ab))). Qed.
+  Local Lemma Hc : has_agent A N c.
+  Proof. exact (proj1 (proj2 Hap_cd)). Qed.
+  Local Lemma Hd : has_agent A N d.
+  Proof. exact (proj1 (proj2 (proj2 Hap_cd))). Qed.
+  Local Lemma Hlink_ab : has_link A N (a, 0) (b, 0).
+  Proof. exact (proj2 (proj2 (proj2 Hap_ab))). Qed.
+  Local Lemma Hlink_cd : has_link A N (c, 0) (d, 0).
+  Proof. exact (proj2 (proj2 (proj2 Hap_cd))). Qed.
+
+  (* The single and double splices, and their base maxima. *)
+  Definition sc_N1  := raw_splice A Ar N a b r1.
+  Definition sc_N2  := raw_splice A Ar N c d r2.
+  Definition sc_N12 := raw_splice A Ar sc_N1 c d r2.
+  Definition sc_N21 := raw_splice A Ar sc_N2 a b r1.
+  Local Definition sc_M  := max_agent_id A N.
+  Local Definition sc_M1 := max_agent_id A sc_N1.
+  Local Definition sc_M2 := max_agent_id A sc_N2.
+
+  (* [sc_rem2 x y p] is [true] when the agent id of [p] is neither [x] nor [y]. *)
+  Local Definition sc_rem2 (x y : nat) (p : nat * A) : bool :=
+    negb (Nat.eqb (fst p) x) && negb (Nat.eqb (fst p) y).
+
+  (* The three agent blocks of the double-splices. [sc_C] is the common block
+     (present, identically, in both orders); [sc_F1]/[sc_F2] are the [r1]/[r2]
+     RHS freshened relative to [N]; [sc_F1p]/[sc_F2p] are the [r1]/[r2] RHS
+     freshened relative to [sc_N2]/[sc_N1] (the other order's base). *)
+  Local Definition sc_C   := filter (sc_rem2 a b) (filter (sc_rem2 c d) (nt_agents N)).
+  Local Definition sc_F1  := map (fun p => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r1)).
+  Local Definition sc_F2  := map (fun p => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r2)).
+  Local Definition sc_F1p := map (fun p => (fresh_id A sc_N2 (fst p), snd p)) (nt_agents (ru_rhs r1)).
+  Local Definition sc_F2p := map (fun p => (fresh_id A sc_N1 (fst p), snd p)) (nt_agents (ru_rhs r2)).
+
+  (* [Nat.min sc_M sc_M1] is bounded by each argument. *)
+  Local Lemma sc_min_le_l : Nat.min sc_M sc_M1 <= sc_M.
+  Proof.
+    destruct (Nat.leb sc_M sc_M1) eqn:Hb.
+    - apply (proj1 (Nat.leb_le sc_M sc_M1)) in Hb.
+      rewrite (Nat.min_l sc_M sc_M1 Hb). lia.
+    - assert (Hnot : ~ sc_M <= sc_M1).
+      { intro Hle. apply (proj2 (Nat.leb_le sc_M sc_M1)) in Hle.
+        rewrite Hle in Hb. discriminate Hb. }
+      assert (Hle : sc_M1 <= sc_M). { lia. }
+      rewrite (Nat.min_r sc_M sc_M1 Hle). lia.
+  Qed.
+
+  Local Lemma sc_min_le_r : Nat.min sc_M sc_M1 <= sc_M1.
+  Proof.
+    destruct (Nat.leb sc_M sc_M1) eqn:Hb.
+    - apply (proj1 (Nat.leb_le sc_M sc_M1)) in Hb.
+      rewrite (Nat.min_l sc_M sc_M1 Hb). lia.
+    - assert (Hnot : ~ sc_M <= sc_M1).
+      { intro Hle. apply (proj2 (Nat.leb_le sc_M sc_M1)) in Hle.
+        rewrite Hle in Hb. discriminate Hb. }
+      assert (Hle : sc_M1 <= sc_M). { lia. }
+      rewrite (Nat.min_r sc_M sc_M1 Hle). lia.
+  Qed.
+
+  (* --- [comm_map] pointwise behaviour on the three blocks --- *)
+
+  Local Lemma cm_id (x : nat) : x <= Nat.min sc_M sc_M1 -> comm_map sc_M sc_M1 sc_M2 x = x.
+  Proof.
+    intros Hx. unfold comm_map.
+    assert (Hb : Nat.leb x (Nat.min sc_M sc_M1) = true).
+    { apply (proj2 (Nat.leb_le x (Nat.min sc_M sc_M1))). exact Hx. }
+    rewrite Hb. reflexivity.
+  Qed.
+
+  Local Lemma cm_r1 (x : nat) : sc_M < x -> x <= sc_M1 -> comm_map sc_M sc_M1 sc_M2 x = shift sc_M2 sc_M x.
+  Proof.
+    intros Hlo Hhi. unfold comm_map.
+    assert (Hb1 : Nat.leb x (Nat.min sc_M sc_M1) = false).
+    { destruct (Nat.leb x (Nat.min sc_M sc_M1)) eqn:Hd.
+      - exfalso.
+        apply (proj1 (Nat.leb_le x (Nat.min sc_M sc_M1))) in Hd.
+        assert (Hmn : Nat.min sc_M sc_M1 <= sc_M). { exact sc_min_le_l. }
+        lia.
+      - reflexivity. }
+    rewrite Hb1.
+    assert (Hb2 : Nat.leb x sc_M1 = true).
+    { apply (proj2 (Nat.leb_le x sc_M1)). exact Hhi. }
+    rewrite Hb2. reflexivity.
+  Qed.
+
+  Local Lemma cm_r2 (x : nat) : x > sc_M1 -> comm_map sc_M sc_M1 sc_M2 x = shift sc_M sc_M1 x.
+  Proof.
+    intros Hx. unfold comm_map.
+    assert (Hb1 : Nat.leb x (Nat.min sc_M sc_M1) = false).
+    { destruct (Nat.leb x (Nat.min sc_M sc_M1)) eqn:Hd.
+      - exfalso.
+        apply (proj1 (Nat.leb_le x (Nat.min sc_M sc_M1))) in Hd.
+        assert (Hmn : Nat.min sc_M sc_M1 <= sc_M1). { exact sc_min_le_r. }
+        lia.
+      - reflexivity. }
+    rewrite Hb1.
+    assert (Hb2 : Nat.leb x sc_M1 = false).
+    { destruct (Nat.leb x sc_M1) eqn:Hd.
+      - exfalso.
+        apply (proj1 (Nat.leb_le x sc_M1)) in Hd.
+        lia.
+      - reflexivity. }
+    rewrite Hb2. reflexivity.
+  Qed.
+
+  (* The shifts land the RHS blocks exactly on the other order's RHS blocks. *)
+  Local Lemma shift_r1 (u : nat) : shift sc_M2 sc_M (u + sc_M + 1) = u + sc_M2 + 1.
+  Proof.
+    unfold shift. destruct (Nat.leb sc_M sc_M2) eqn:Hb.
+    - apply (proj1 (Nat.leb_le sc_M sc_M2)) in Hb. lia.
+    - assert (Hnot : ~ sc_M <= sc_M2).
+      { intro Hle. apply (proj2 (Nat.leb_le sc_M sc_M2)) in Hle.
+        rewrite Hle in Hb. discriminate Hb. }
+      lia.
+  Qed.
+
+  Local Lemma shift_r2 (v : nat) : shift sc_M sc_M1 (v + sc_M1 + 1) = v + sc_M + 1.
+  Proof.
+    unfold shift. destruct (Nat.leb sc_M1 sc_M) eqn:Hb.
+    - apply (proj1 (Nat.leb_le sc_M1 sc_M)) in Hb. lia.
+    - assert (Hnot : ~ sc_M1 <= sc_M).
+      { intro Hle. apply (proj2 (Nat.leb_le sc_M1 sc_M)) in Hle.
+        rewrite Hle in Hb. discriminate Hb. }
+      lia.
+  Qed.
+
+  (* --- Filter fusion and commutation (for the common-agent block) --- *)
+
+  Local Lemma filter_fusion (P Q : (nat * A) -> bool) (l : list (nat * A)) :
+    filter P (filter Q l) = filter (fun x => P x && Q x) l.
+  Proof.
+    induction l as [|h t IH].
+    - reflexivity.
+    - cbn [filter].
+      destruct (Q h) eqn:Hq; destruct (P h) eqn:Hp; cbn [filter].
+      + rewrite Hp. cbn [filter]. rewrite IH. reflexivity.
+      + rewrite Hp. cbn [filter]. rewrite IH. reflexivity.
+      + rewrite IH. reflexivity.
+      + rewrite IH. reflexivity.
+  Qed.
+
+  Local Lemma filter_comm (P Q : (nat * A) -> bool) (l : list (nat * A)) :
+    filter P (filter Q l) = filter Q (filter P l).
+  Proof.
+    rewrite (filter_fusion P Q l), (filter_fusion Q P l).
+    apply (filter_ext_in (fun x => P x && Q x) (fun x => Q x && P x) l).
+    intros x Hx.
+    change ((P x && Q x) = (Q x && P x)).
+    destruct (P x) eqn:Hp; destruct (Q x) eqn:Hq; simpl; reflexivity.
+  Qed.
+
+  (* --- Structural decomposition of the double-splices' agent lists --- *)
+
+  Local Lemma sc_agents_N1 : nt_agents sc_N1 = filter (sc_rem2 a b) (nt_agents N) ++ sc_F1.
+  Proof.
+    unfold sc_N1, raw_splice, splice_agents, sc_F1, sc_rem2. reflexivity.
+  Qed.
+
+  Local Lemma sc_agents_N2 : nt_agents sc_N2 = filter (sc_rem2 c d) (nt_agents N) ++ sc_F2.
+  Proof.
+    unfold sc_N2, raw_splice, splice_agents, sc_F2, sc_rem2. reflexivity.
+  Qed.
+
+  (* The freshened RHS blocks survive the "remove the other pair" filter. *)
+  Local Lemma sc_keep_fresh_cd : filter (sc_rem2 c d) sc_F1 = sc_F1.
+  Proof.
+    change (filter (fun p : nat * A => negb (Nat.eqb (fst p) c) && negb (Nat.eqb (fst p) d)) sc_F1 = sc_F1).
+    exact (splice_keep_keeps_fresh A N c d r1 Hc Hd).
+  Qed.
+
+  Local Lemma sc_keep_fresh_ab : filter (sc_rem2 a b) sc_F2 = sc_F2.
+  Proof.
+    change (filter (fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) sc_F2 = sc_F2).
+    exact (splice_keep_keeps_fresh A N a b r2 Ha Hb).
+  Qed.
+
+  Local Lemma sc_agents_N12 : nt_agents sc_N12 = (sc_C ++ sc_F1) ++ sc_F2p.
+  Proof.
+    assert (HL : nt_agents sc_N12 = (filter (sc_rem2 c d) (filter (sc_rem2 a b) (nt_agents N)) ++ sc_F1) ++ sc_F2p).
+    { unfold sc_N12, raw_splice, splice_agents.
+      change (filter (sc_rem2 c d) (nt_agents sc_N1) ++ sc_F2p
+              = (filter (sc_rem2 c d) (filter (sc_rem2 a b) (nt_agents N)) ++ sc_F1) ++ sc_F2p).
+      rewrite sc_agents_N1.
+      rewrite (filter_app (sc_rem2 c d) (filter (sc_rem2 a b) (nt_agents N)) sc_F1).
+      rewrite sc_keep_fresh_cd.
+      reflexivity. }
+    assert (HR : (sc_C ++ sc_F1) ++ sc_F2p = (filter (sc_rem2 c d) (filter (sc_rem2 a b) (nt_agents N)) ++ sc_F1) ++ sc_F2p).
+    { unfold sc_C.
+      rewrite (filter_comm (sc_rem2 a b) (sc_rem2 c d) (nt_agents N)).
+      reflexivity. }
+    rewrite HL, HR. reflexivity.
+  Qed.
+
+  Local Lemma sc_agents_N21 : nt_agents sc_N21 = (sc_C ++ sc_F2) ++ sc_F1p.
+  Proof.
+    assert (HL : nt_agents sc_N21 = (filter (sc_rem2 a b) (filter (sc_rem2 c d) (nt_agents N)) ++ sc_F2) ++ sc_F1p).
+    { unfold sc_N21, raw_splice, splice_agents.
+      change (filter (sc_rem2 a b) (nt_agents sc_N2) ++ sc_F1p
+              = (filter (sc_rem2 a b) (filter (sc_rem2 c d) (nt_agents N)) ++ sc_F2) ++ sc_F1p).
+      rewrite sc_agents_N2.
+      rewrite (filter_app (sc_rem2 a b) (filter (sc_rem2 c d) (nt_agents N)) sc_F2).
+      rewrite sc_keep_fresh_ab.
+      reflexivity. }
+    assert (HR : (sc_C ++ sc_F2) ++ sc_F1p = (filter (sc_rem2 a b) (filter (sc_rem2 c d) (nt_agents N)) ++ sc_F2) ++ sc_F1p).
+    { unfold sc_C. reflexivity. }
+    rewrite HL, HR. reflexivity.
+  Qed.
+
+  (* --- The renaming applied to an agent pair, and map helpers --- *)
+
+  (* Shift the id by [comm_map], keep the label. *)
+  Local Definition cm_pair (p : nat * A) : nat * A :=
+    (comm_map sc_M sc_M1 sc_M2 (fst p), snd p).
+
+  (* [x <= u] and [x <= v] imply [x <= min u v]. *)
+  Local Lemma nat_le_min (x u v : nat) : x <= u -> x <= v -> x <= Nat.min u v.
+  Proof.
+    intros Hxu Hxv.
+    destruct (Nat.leb u v) eqn:Huv.
+    - apply (proj1 (Nat.leb_le u v)) in Huv.
+      rewrite (Nat.min_l u v Huv). exact Hxu.
+    - assert (Hnot : ~ u <= v).
+      { intro H. apply (proj2 (Nat.leb_le u v)) in H. rewrite H in Huv. discriminate. }
+      assert (Hle : v <= u). { lia. }
+      rewrite (Nat.min_r u v Hle). exact Hxv.
+  Qed.
+
+  (* Pointwise equality on the elements of [l] implies equality of the maps. *)
+  Local Lemma map_ptw (f g : nat * A -> nat * A) (l : list (nat * A)) :
+    (forall x, In x l -> f x = g x) -> map f l = map g l.
+  Proof.
+    induction l as [|h t IH]; intros Hpt; simpl.
+    - reflexivity.
+    - assert (Hh : f h = g h). { exact (Hpt h (in_eq h t)). }
+      rewrite Hh.
+      assert (Ht : forall x, In x t -> f x = g x).
+      { intros x Hx. exact (Hpt x (in_cons h x t Hx)). }
+      rewrite (IH Ht). reflexivity.
+  Qed.
+
+  (* A freshened id of [N] (relative to the [r1] RHS) is an agent of [sc_N1],
+     hence bounded by [sc_M1]. *)
+  Local Lemma sc_M1_ge_fresh1 (q : nat * A) (Hq : In q (nt_agents (ru_rhs r1))) :
+    fresh_id A N (fst q) <= sc_M1.
+  Proof.
+    unfold sc_M1, max_agent_id.
+    assert (Hag : In (fresh_id A N (fst q), snd q) (nt_agents sc_N1)).
+    { unfold sc_N1, raw_splice, splice_agents.
+      apply in_or_app. right.
+      apply (proj2 (in_map_iff (fun p : nat * A => (fresh_id A N (fst p), snd p))
+             (nt_agents (ru_rhs r1)) (fresh_id A N (fst q), snd q))).
+      exists q. split.
+      - reflexivity.
+      - exact Hq. }
+    exact (list_max_upper_bound (map fst (nt_agents sc_N1)) (fresh_id A N (fst q))
+           (In_map fst (nt_agents sc_N1) (fresh_id A N (fst q), snd q) Hag)).
+  Qed.
+
+  (* --- [cm_pair] acts as the identity on the common block --- *)
+
+  Local Lemma sc_map_C : map cm_pair sc_C = sc_C.
+  Proof.
+    assert (Hpt : forall p, In p sc_C -> cm_pair p = p).
+    { intros p Hp.
+      destruct p as [pid plbl].
+      unfold cm_pair.
+      f_equal.
+      apply cm_id.
+      apply nat_le_min.
+      - apply (proj1 (filter_In (sc_rem2 a b) (pid, plbl) (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+        destruct Hp as [Hp _].
+        apply (proj1 (filter_In (sc_rem2 c d) (pid, plbl) (nt_agents N))) in Hp.
+        destruct Hp as [Hp _].
+        specialize (list_max_upper_bound (map fst (nt_agents N)) pid
+                   (In_map fst (nt_agents N) (pid, plbl) Hp)) as HleM.
+        unfold sc_M, max_agent_id in HleM.
+        exact HleM.
+      - apply (proj1 (filter_In (sc_rem2 a b) (pid, plbl) (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+        destruct Hp as [Hp Hab].
+        apply (proj1 (filter_In (sc_rem2 c d) (pid, plbl) (nt_agents N))) in Hp.
+        destruct Hp as [Hp _].
+        assert (Hp_ab : In (pid, plbl) (filter (sc_rem2 a b) (nt_agents N))).
+        { apply (proj2 (filter_In (sc_rem2 a b) (pid, plbl) (nt_agents N))). split.
+          - exact Hp.
+          - exact Hab. }
+        assert (Hp_N1 : In (pid, plbl) (nt_agents sc_N1)).
+        { unfold sc_N1, raw_splice, splice_agents.
+          apply in_or_app. left. exact Hp_ab. }
+        specialize (list_max_upper_bound (map fst (nt_agents sc_N1)) pid
+                   (In_map fst (nt_agents sc_N1) (pid, plbl) Hp_N1)) as HleM1.
+        unfold sc_M1, max_agent_id in HleM1.
+        exact HleM1. }
+    assert (H1 : map cm_pair sc_C = map (fun p : nat * A => p) sc_C).
+    { exact (map_ptw cm_pair (fun p : nat * A => p) sc_C Hpt). }
+    rewrite H1.
+    apply map_id.
+  Qed.
+
+  (* --- [cm_pair] lands the [r1]-RHS block on the other order's [r1]-RHS block --- *)
+
+  Local Lemma sc_map_F1 : map cm_pair sc_F1 = sc_F1p.
+  Proof.
+    unfold sc_F1, sc_F1p.
+    rewrite (map_map (fun q : nat * A => (fresh_id A N (fst q), snd q)) cm_pair (nt_agents (ru_rhs r1))).
+    apply (map_ptw (fun q : nat * A => cm_pair (fresh_id A N (fst q), snd q))
+                   (fun q : nat * A => (fresh_id A sc_N2 (fst q), snd q))
+                   (nt_agents (ru_rhs r1))).
+    intros q Hq.
+    unfold cm_pair.
+    simpl.
+    f_equal.
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A N (fst q)) = shift sc_M2 sc_M (fresh_id A N (fst q))).
+    { apply cm_r1.
+      - unfold fresh_id, sc_M, max_agent_id. lia.
+      - exact (sc_M1_ge_fresh1 q Hq). }
+    rewrite Hcm.
+    change (shift sc_M2 sc_M (sc_M + 1 + fst q) = sc_M2 + 1 + fst q).
+    assert (Harg : sc_M + 1 + fst q = fst q + sc_M + 1). { lia. }
+    rewrite Harg.
+    rewrite (shift_r1 (fst q)).
+    lia.
+  Qed.
+
+  (* --- [cm_pair] lands the [r2]-RHS block on the other order's [r2]-RHS block --- *)
+
+  Local Lemma sc_map_F2p : map cm_pair sc_F2p = sc_F2.
+  Proof.
+    unfold sc_F2p, sc_F2.
+    rewrite (map_map (fun q : nat * A => (fresh_id A sc_N1 (fst q), snd q)) cm_pair (nt_agents (ru_rhs r2))).
+    apply (map_ptw (fun q : nat * A => cm_pair (fresh_id A sc_N1 (fst q), snd q))
+                   (fun q : nat * A => (fresh_id A N (fst q), snd q))
+                   (nt_agents (ru_rhs r2))).
+    intros q Hq.
+    unfold cm_pair.
+    simpl.
+    f_equal.
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 (fst q)) = shift sc_M sc_M1 (fresh_id A sc_N1 (fst q))).
+    { apply cm_r2.
+      - unfold fresh_id, sc_M1, max_agent_id. lia. }
+    rewrite Hcm.
+    change (shift sc_M sc_M1 (sc_M1 + 1 + fst q) = sc_M + 1 + fst q).
+    assert (Harg : sc_M1 + 1 + fst q = fst q + sc_M1 + 1). { lia. }
+    rewrite Harg.
+    rewrite (shift_r2 (fst q)).
+    lia.
+  Qed.
+
+  (* --- Swapping the two RHS blocks (the common block stays put) --- *)
+
+  Local Lemma sc_perm_blocks : Permutation ((sc_C ++ sc_F1p) ++ sc_F2) ((sc_C ++ sc_F2) ++ sc_F1p).
+  Proof.
+    rewrite <- app_assoc.
+    rewrite <- app_assoc.
+    apply Permutation_app_head.
+    apply Permutation_app_comm.
+  Qed.
+
+  (* --- The [ni_agents] field: the renamed agents of [sc_N12] permute [sc_N21] --- *)
+
+  Local Lemma sc_ni_agents : Permutation (map cm_pair (nt_agents sc_N12)) (nt_agents sc_N21).
+  Proof.
+    rewrite sc_agents_N12, sc_agents_N21.
+    rewrite (map_app cm_pair (sc_C ++ sc_F1) sc_F2p).
+    rewrite (map_app cm_pair sc_C sc_F1).
+    rewrite sc_map_C, sc_map_F1, sc_map_F2p.
+    exact sc_perm_blocks.
+  Qed.
+
+  (* --- [ni_inj]: [comm_map] is injective on the agents of [sc_N12] --- *)
+
+  (* The three blocks of [sc_N12]'s agents, by id. *)
+  Local Definition ids_C   := map fst sc_C.
+  Local Definition ids_F1  := map fst sc_F1.
+  Local Definition ids_F2p := map fst sc_F2p.
+
+  (* [x] in the [r1]-RHS id block means [x = fresh_id A N (fst p)] for some [p]
+     in the [r1] RHS (two-level [in_map_iff] through [sc_F1]). *)
+  Local Lemma in_ids_F1 (x : nat) (Hx : In x ids_F1) :
+    exists p, In p (nt_agents (ru_rhs r1)) /\ x = fresh_id A N (fst p).
+  Proof.
+    unfold ids_F1 in Hx.
+    apply (proj1 (in_map_iff fst sc_F1 x)) in Hx.
+    destruct Hx as [q [Hqx Hq]].
+    unfold sc_F1 in Hq.
+    apply (proj1 (in_map_iff (fun p : nat * A => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r1)) q)) in Hq.
+    destruct Hq as [p [Hqp Hp]].
+    exists p.
+    split.
+    - exact Hp.
+    - subst q.
+      simpl in Hqx.
+      symmetry.
+      exact Hqx.
+  Qed.
+
+  (* Same for the [r2]-RHS id block, relative to [sc_N1]. *)
+  Local Lemma in_ids_F2p (x : nat) (Hx : In x ids_F2p) :
+    exists p, In p (nt_agents (ru_rhs r2)) /\ x = fresh_id A sc_N1 (fst p).
+  Proof.
+    unfold ids_F2p in Hx.
+    apply (proj1 (in_map_iff fst sc_F2p x)) in Hx.
+    destruct Hx as [q [Hqx Hq]].
+    unfold sc_F2p in Hq.
+    apply (proj1 (in_map_iff (fun p : nat * A => (fresh_id A sc_N1 (fst p), snd p)) (nt_agents (ru_rhs r2)) q)) in Hq.
+    destruct Hq as [p [Hqp Hp]].
+    exists p.
+    split.
+    - exact Hp.
+    - subst q.
+      simpl in Hqx.
+      symmetry.
+      exact Hqx.
+  Qed.
+
+  (* [x] in the common block: [comm_map] fixes it. *)
+  Local Lemma blkC (x : nat) : In x ids_C -> comm_map sc_M sc_M1 sc_M2 x = x.
+  Proof.
+    intros Hx.
+    unfold ids_C in Hx.
+    apply (proj1 (in_map_iff fst sc_C x)) in Hx.
+    destruct Hx as [p [Hpx Hp]].
+    subst x.
+    apply cm_id.
+    apply nat_le_min.
+    - apply (proj1 (filter_In (sc_rem2 a b) p (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+      destruct Hp as [Hp _].
+      apply (proj1 (filter_In (sc_rem2 c d) p (nt_agents N))) in Hp.
+      destruct Hp as [Hp _].
+      specialize (list_max_upper_bound (map fst (nt_agents N)) (fst p)
+                 (In_map fst (nt_agents N) p Hp)) as HleM.
+      unfold sc_M, max_agent_id in HleM.
+      exact HleM.
+    - apply (proj1 (filter_In (sc_rem2 a b) p (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+      destruct Hp as [Hp Hab].
+      apply (proj1 (filter_In (sc_rem2 c d) p (nt_agents N))) in Hp.
+      destruct Hp as [Hp _].
+      assert (Hp_ab : In p (filter (sc_rem2 a b) (nt_agents N))).
+      { apply (proj2 (filter_In (sc_rem2 a b) p (nt_agents N))). split.
+        - exact Hp.
+        - exact Hab. }
+      assert (Hp_N1 : In p (nt_agents sc_N1)).
+      { unfold sc_N1, raw_splice, splice_agents.
+        apply in_or_app. left. exact Hp_ab. }
+      specialize (list_max_upper_bound (map fst (nt_agents sc_N1)) (fst p)
+                 (In_map fst (nt_agents sc_N1) p Hp_N1)) as HleM1.
+      unfold sc_M1, max_agent_id in HleM1.
+      exact HleM1.
+  Qed.
+
+  (* [x] in the [r1]-RHS block: [comm_map] shifts it by [sc_M2 - sc_M]. *)
+  Local Lemma blkF1 (x : nat) : In x ids_F1 -> comm_map sc_M sc_M1 sc_M2 x = shift sc_M2 sc_M x.
+  Proof.
+    intros Hx.
+    destruct (in_ids_F1 x Hx) as [p [Hp Hxp]].
+    subst x.
+    apply cm_r1.
+    - unfold fresh_id, sc_M, max_agent_id. lia.
+    - exact (sc_M1_ge_fresh1 p Hp).
+  Qed.
+
+  (* [x] in the [r2]-RHS block: [comm_map] shifts it by [sc_M - sc_M1]. *)
+  Local Lemma blkF2p (x : nat) : In x ids_F2p -> comm_map sc_M sc_M1 sc_M2 x = shift sc_M sc_M1 x.
+  Proof.
+    intros Hx.
+    destruct (in_ids_F2p x Hx) as [p [Hp Hxp]].
+    subst x.
+    apply cm_r2.
+    - unfold fresh_id, sc_M1, max_agent_id. lia.
+  Qed.
+
+  (* The common block's ids are bounded by [sc_M2] (it is a subset of [sc_N2]). *)
+  Local Lemma C_le_M2 (x : nat) : In x ids_C -> x <= sc_M2.
+  Proof.
+    intros Hx.
+    unfold ids_C in Hx.
+    apply (proj1 (in_map_iff fst sc_C x)) in Hx.
+    destruct Hx as [p [Hpx Hp]].
+    subst x.
+    assert (Hp_N2 : In p (nt_agents sc_N2)).
+    { unfold sc_N2, raw_splice, splice_agents.
+      apply in_or_app. left.
+      apply (proj2 (filter_In (sc_rem2 c d) p (nt_agents N))). split.
+      - apply (proj1 (filter_In (sc_rem2 a b) p (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+        destruct Hp as [Hp _].
+        apply (proj1 (filter_In (sc_rem2 c d) p (nt_agents N))) in Hp.
+        destruct Hp as [Hp _].
+        exact Hp.
+      - apply (proj1 (filter_In (sc_rem2 a b) p (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+        destruct Hp as [Hp _].
+        apply (proj1 (filter_In (sc_rem2 c d) p (nt_agents N))) in Hp.
+        destruct Hp as [_ Hcd].
+        exact Hcd. }
+    specialize (list_max_upper_bound (map fst (nt_agents sc_N2)) (fst p)
+               (In_map fst (nt_agents sc_N2) p Hp_N2)) as HleM2.
+    unfold sc_M2, max_agent_id in HleM2.
+    exact HleM2.
+  Qed.
+
+  (* Image bounds: the three blocks land in pairwise disjoint id ranges. *)
+  Local Lemma img_C (x : nat) : In x ids_C -> comm_map sc_M sc_M1 sc_M2 x <= sc_M2.
+  Proof.
+    intros Hx. rewrite (blkC x Hx). exact (C_le_M2 x Hx).
+  Qed.
+
+  Local Lemma img_F1 (x : nat) : In x ids_F1 -> comm_map sc_M sc_M1 sc_M2 x > sc_M2.
+  Proof.
+    intros Hx.
+    destruct (in_ids_F1 x Hx) as [p [Hp Hxp]].
+    subst x.
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A N (fst p)) = shift sc_M2 sc_M (fresh_id A N (fst p))).
+    { apply cm_r1.
+      - unfold fresh_id, sc_M, max_agent_id. lia.
+      - exact (sc_M1_ge_fresh1 p Hp). }
+    rewrite Hcm.
+    change (shift sc_M2 sc_M (sc_M + 1 + fst p) > sc_M2).
+    assert (Harg : sc_M + 1 + fst p = fst p + sc_M + 1). { lia. }
+    rewrite Harg.
+    rewrite (shift_r1 (fst p)).
+    lia.
+  Qed.
+
+  Local Lemma img_F2p (x : nat) : In x ids_F2p -> comm_map sc_M sc_M1 sc_M2 x > sc_M.
+  Proof.
+    intros Hx.
+    destruct (in_ids_F2p x Hx) as [p [Hp Hxp]].
+    subst x.
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 (fst p)) = shift sc_M sc_M1 (fresh_id A sc_N1 (fst p))).
+    { apply cm_r2.
+      - unfold fresh_id, sc_M1, max_agent_id. lia. }
+    rewrite Hcm.
+    change (shift sc_M sc_M1 (sc_M1 + 1 + fst p) > sc_M).
+    assert (Harg : sc_M1 + 1 + fst p = fst p + sc_M1 + 1). { lia. }
+    rewrite Harg.
+    rewrite (shift_r2 (fst p)).
+    lia.
+  Qed.
+
+  (* The [r2]-RHS block's image is also bounded by [sc_M2] (so it is disjoint
+     from the [r1]-RHS block's image, which lies above [sc_M2]). *)
+  Local Lemma img_F2p_le_M2 (x : nat) : In x ids_F2p -> comm_map sc_M sc_M1 sc_M2 x <= sc_M2.
+  Proof.
+    intros Hx.
+    destruct (in_ids_F2p x Hx) as [p [Hp Hxp]].
+    subst x.
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 (fst p)) = sc_M + 1 + fst p).
+    { assert (Hcm1 : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 (fst p)) = shift sc_M sc_M1 (fresh_id A sc_N1 (fst p))).
+      { apply cm_r2.
+        unfold fresh_id, sc_M1, max_agent_id. lia. }
+      rewrite Hcm1.
+      change (shift sc_M sc_M1 (sc_M1 + 1 + fst p) = sc_M + 1 + fst p).
+      assert (Harg : sc_M1 + 1 + fst p = fst p + sc_M1 + 1). { lia. }
+      rewrite Harg.
+      rewrite (shift_r2 (fst p)).
+      lia. }
+    rewrite Hcm.
+    change (fresh_id A N (fst p) <= sc_M2).
+    assert (Hag : In (fresh_id A N (fst p), snd p) (nt_agents sc_N2)).
+    { unfold sc_N2, raw_splice, splice_agents.
+      apply in_or_app. right.
+      apply (proj2 (in_map_iff (fun q : nat * A => (fresh_id A N (fst q), snd q))
+             (nt_agents (ru_rhs r2)) (fresh_id A N (fst p), snd p))).
+      exists p. split.
+      - reflexivity.
+      - exact Hp. }
+    specialize (list_max_upper_bound (map fst (nt_agents sc_N2)) (fresh_id A N (fst p))
+               (In_map fst (nt_agents sc_N2) (fresh_id A N (fst p), snd p) Hag)) as Hle.
+    unfold sc_M2, max_agent_id in Hle.
+    exact Hle.
+  Qed.
+
+  (* The common block's image is bounded by [sc_M] (sharper than [img_C]; needed
+     to separate it from the [r2]-RHS block's image, which lies above [sc_M]). *)
+  Local Lemma img_C_le_M (x : nat) : In x ids_C -> comm_map sc_M sc_M1 sc_M2 x <= sc_M.
+  Proof.
+    intros Hx.
+    rewrite (blkC x Hx).
+    unfold ids_C in Hx.
+    apply (proj1 (in_map_iff fst sc_C x)) in Hx.
+    destruct Hx as [p [Hpx Hp]].
+    subst x.
+    apply (proj1 (filter_In (sc_rem2 a b) p (filter (sc_rem2 c d) (nt_agents N)))) in Hp.
+    destruct Hp as [Hp _].
+    apply (proj1 (filter_In (sc_rem2 c d) p (nt_agents N))) in Hp.
+    destruct Hp as [Hp _].
+    specialize (list_max_upper_bound (map fst (nt_agents N)) (fst p)
+               (In_map fst (nt_agents N) p Hp)) as HleM.
+    unfold sc_M, max_agent_id in HleM.
+    exact HleM.
+  Qed.
+
+  (* --- Exact image values on the two RHS blocks (for within-block injectivity) --- *)
+
+  Local Lemma cm_F1_val (p : nat * A) (Hp : In p (nt_agents (ru_rhs r1))) :
+    comm_map sc_M sc_M1 sc_M2 (fresh_id A N (fst p)) = fst p + sc_M2 + 1.
+  Proof.
+    assert (Hin : In (fresh_id A N (fst p)) ids_F1).
+    { unfold ids_F1.
+      apply (proj2 (in_map_iff fst sc_F1 (fresh_id A N (fst p)))).
+      exists (fresh_id A N (fst p), snd p).
+      split.
+      - reflexivity.
+      - unfold sc_F1.
+        apply (proj2 (in_map_iff (fun q : nat * A => (fresh_id A N (fst q), snd q)) (nt_agents (ru_rhs r1)) (fresh_id A N (fst p), snd p))).
+        exists p.
+        split.
+        + reflexivity.
+        + exact Hp. }
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A N (fst p)) = shift sc_M2 sc_M (fresh_id A N (fst p))).
+    { exact (blkF1 (fresh_id A N (fst p)) Hin). }
+    rewrite Hcm.
+    unfold fresh_id.
+    assert (Harg : max_agent_id A N + 1 + fst p = fst p + sc_M + 1). { unfold sc_M. lia. }
+    rewrite Harg.
+    rewrite (shift_r1 (fst p)).
+    reflexivity.
+  Qed.
+
+  Local Lemma cm_F2p_val (p : nat * A) (Hp : In p (nt_agents (ru_rhs r2))) :
+    comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 (fst p)) = fst p + sc_M + 1.
+  Proof.
+    assert (Hin : In (fresh_id A sc_N1 (fst p)) ids_F2p).
+    { unfold ids_F2p.
+      apply (proj2 (in_map_iff fst sc_F2p (fresh_id A sc_N1 (fst p)))).
+      exists (fresh_id A sc_N1 (fst p), snd p).
+      split.
+      - reflexivity.
+      - unfold sc_F2p.
+        apply (proj2 (in_map_iff (fun q : nat * A => (fresh_id A sc_N1 (fst q), snd q)) (nt_agents (ru_rhs r2)) (fresh_id A sc_N1 (fst p), snd p))).
+        exists p.
+        split.
+        + reflexivity.
+        + exact Hp. }
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 (fst p)) = shift sc_M sc_M1 (fresh_id A sc_N1 (fst p))).
+    { exact (blkF2p (fresh_id A sc_N1 (fst p)) Hin). }
+    rewrite Hcm.
+    unfold fresh_id.
+    assert (Harg : max_agent_id A sc_N1 + 1 + fst p = fst p + sc_M1 + 1). { unfold sc_M1. lia. }
+    rewrite Harg.
+    rewrite (shift_r2 (fst p)).
+    reflexivity.
+  Qed.
+
+  (* --- [comm_map] is injective on each block --- *)
+
+  Local Lemma inj_C (a1 a2 : nat) : In a1 ids_C -> In a2 ids_C ->
+    comm_map sc_M sc_M1 sc_M2 a1 = comm_map sc_M sc_M1 sc_M2 a2 -> a1 = a2.
+  Proof.
+    intros H1 H2 Heq.
+    rewrite (blkC a1 H1), (blkC a2 H2) in Heq.
+    exact Heq.
+  Qed.
+
+  Local Lemma inj_F1 (a1 a2 : nat) : In a1 ids_F1 -> In a2 ids_F1 ->
+    comm_map sc_M sc_M1 sc_M2 a1 = comm_map sc_M sc_M1 sc_M2 a2 -> a1 = a2.
+  Proof.
+    intros H1 H2 Heq.
+    destruct (in_ids_F1 a1 H1) as [p1 [Hp1 H1e]].
+    destruct (in_ids_F1 a2 H2) as [p2 [Hp2 H2e]].
+    subst a1 a2.
+    rewrite (cm_F1_val p1 Hp1), (cm_F1_val p2 Hp2) in Heq.
+    assert (Hcancel : fst p1 = fst p2). { lia. }
+    exact (f_equal (fresh_id A N) Hcancel).
+  Qed.
+
+  Local Lemma inj_F2p (a1 a2 : nat) : In a1 ids_F2p -> In a2 ids_F2p ->
+    comm_map sc_M sc_M1 sc_M2 a1 = comm_map sc_M sc_M1 sc_M2 a2 -> a1 = a2.
+  Proof.
+    intros H1 H2 Heq.
+    destruct (in_ids_F2p a1 H1) as [p1 [Hp1 H1e]].
+    destruct (in_ids_F2p a2 H2) as [p2 [Hp2 H2e]].
+    subst a1 a2.
+    rewrite (cm_F2p_val p1 Hp1), (cm_F2p_val p2 Hp2) in Heq.
+    assert (Hcancel : fst p1 = fst p2). { lia. }
+    exact (f_equal (fresh_id A sc_N1) Hcancel).
+  Qed.
+
+  (* --- Decomposing membership in the union of the three id blocks --- *)
+
+  Local Definition ids_N12 := (ids_C ++ ids_F1) ++ ids_F2p.
+
+  Local Lemma in_ids_N12 (x : nat) : In x ids_N12 -> In x ids_C \/ In x ids_F1 \/ In x ids_F2p.
+  Proof.
+    intros Hx.
+    unfold ids_N12.
+    apply in_app_or in Hx.
+    destruct Hx as [Hleft|Hright].
+    - apply in_app_or in Hleft.
+      destruct Hleft as [Hc|Hf1].
+      + left. exact Hc.
+      + right. left. exact Hf1.
+    - right. right. exact Hright.
+  Qed.
+
+  Local Lemma ids_N12_eq :
+    map fst (nt_agents sc_N12) = ids_N12.
+  Proof.
+    unfold ids_N12, ids_C, ids_F1, ids_F2p.
+    rewrite sc_agents_N12.
+    rewrite (map_app fst (sc_C ++ sc_F1) sc_F2p).
+    rewrite (map_app fst sc_C sc_F1).
+    reflexivity.
+  Qed.
+
+  (* --- [ni_inj]: [comm_map] is injective on the agents of [sc_N12] --- *)
+
+  Local Lemma sc_ni_inj : forall a1 a2,
+    has_agent A sc_N12 a1 -> has_agent A sc_N12 a2 ->
+    comm_map sc_M sc_M1 sc_M2 a1 = comm_map sc_M sc_M1 sc_M2 a2 -> a1 = a2.
+  Proof.
+    intros a1 a2 H1 H2 Heq.
+    apply (proj1 (has_agent_In A sc_N12 a1)) in H1.
+    apply (proj1 (has_agent_In A sc_N12 a2)) in H2.
+    rewrite ids_N12_eq in H1, H2.
+    assert (H1b : In a1 ids_C \/ In a1 ids_F1 \/ In a1 ids_F2p). { exact (in_ids_N12 a1 H1). }
+    assert (H2b : In a2 ids_C \/ In a2 ids_F1 \/ In a2 ids_F2p). { exact (in_ids_N12 a2 H2). }
+    destruct H1b as [H1c|H1rest].
+    - (* a1 in the common block *)
+      destruct H2b as [H2c|H2rest].
+      + (* a2 in the common block *)
+        exact (inj_C a1 a2 H1c H2c Heq).
+      + (* a2 in an RHS block *)
+        destruct H2rest as [H2f1|H2f2p].
+        * (* a2 in the [r1]-RHS block *)
+          exfalso.
+          assert (Hc : comm_map sc_M sc_M1 sc_M2 a1 <= sc_M2). { exact (img_C a1 H1c). }
+          assert (Hf : sc_M2 < comm_map sc_M sc_M1 sc_M2 a2). { exact (img_F1 a2 H2f1). }
+          rewrite Heq in Hc. lia.
+        * (* a2 in the [r2]-RHS block *)
+          exfalso.
+          assert (Hc : comm_map sc_M sc_M1 sc_M2 a1 <= sc_M). { exact (img_C_le_M a1 H1c). }
+          assert (Hf : sc_M < comm_map sc_M sc_M1 sc_M2 a2). { exact (img_F2p a2 H2f2p). }
+          rewrite Heq in Hc. lia.
+    - (* a1 in an RHS block *)
+      destruct H1rest as [H1f1|H1f2p].
+      * (* a1 in the [r1]-RHS block *)
+        destruct H2b as [H2c|H2rest].
+        + (* a2 in the common block *)
+          exfalso.
+          assert (Hf : sc_M2 < comm_map sc_M sc_M1 sc_M2 a1). { exact (img_F1 a1 H1f1). }
+          assert (Hc : comm_map sc_M sc_M1 sc_M2 a2 <= sc_M2). { exact (img_C a2 H2c). }
+          rewrite <- Heq in Hc. lia.
+        + (* a2 in an RHS block *)
+          { destruct H2rest as [H2f1|H2f2p].
+            - (* a2 in the [r1]-RHS block *)
+              exact (inj_F1 a1 a2 H1f1 H2f1 Heq).
+            - (* a2 in the [r2]-RHS block *)
+              exfalso.
+              assert (Hf : sc_M2 < comm_map sc_M sc_M1 sc_M2 a1). { exact (img_F1 a1 H1f1). }
+              assert (Hf2 : comm_map sc_M sc_M1 sc_M2 a2 <= sc_M2). { exact (img_F2p_le_M2 a2 H2f2p). }
+              rewrite <- Heq in Hf2. lia. }
+      * (* a1 in the [r2]-RHS block *)
+        destruct H2b as [H2c|H2rest].
+        + (* a2 in the common block *)
+          exfalso.
+          assert (Hf : sc_M < comm_map sc_M sc_M1 sc_M2 a1). { exact (img_F2p a1 H1f2p). }
+          assert (Hc : comm_map sc_M sc_M1 sc_M2 a2 <= sc_M). { exact (img_C_le_M a2 H2c). }
+          rewrite <- Heq in Hc. lia.
+        + (* a2 in an RHS block *)
+          { destruct H2rest as [H2f1|H2f2p].
+            - (* a2 in the [r1]-RHS block *)
+              exfalso.
+              assert (Hf2 : comm_map sc_M sc_M1 sc_M2 a1 <= sc_M2). { exact (img_F2p_le_M2 a1 H1f2p). }
+              assert (Hf : sc_M2 < comm_map sc_M sc_M1 sc_M2 a2). { exact (img_F1 a2 H2f1). }
+              rewrite Heq in Hf2. lia.
+            - (* a2 in the [r2]-RHS block *)
+              exact (inj_F2p a1 a2 H1f2p H2f2p Heq). }
+  Qed.
+
+  (* ========================================================================== *)
+  (* Stage 5: the [ni_links] field.                                             *)
+  (*                                                                            *)
+  (* The links of [sc_N12] decompose into three blocks: the kept links (from    *)
+  (* [N], surviving both fired pairs), the [r1]-RHS fresh links, and the        *)
+  (* [r2]-RHS fresh links. The renaming [comm_map] carries the kept block to    *)
+  (* the kept block of [sc_N21] (the crux: the endpoint correspondence) and     *)
+  (* swaps the two fresh blocks.                                                *)
+  (* ========================================================================== *)
+
+  (* Rename both endpoints of a link by [comm_map]. *)
+  Local Definition cm_pair_link (l : port_ref * port_ref) : port_ref * port_ref :=
+    ((comm_map sc_M sc_M1 sc_M2 (fst (fst l)), snd (fst l)),
+     (comm_map sc_M sc_M1 sc_M2 (fst (snd l)), snd (snd l))).
+
+  (* The four rewire maps (by [r1] or [r2], relative to [N], [sc_N1], or [sc_N2]). *)
+  Local Definition rw1  (l : port_ref * port_ref) : port_ref * port_ref := rewire_link A Ar N a b r1 l.
+  Local Definition rw2' (l : port_ref * port_ref) : port_ref * port_ref := rewire_link A Ar N c d r2 l.
+  Local Definition rw2  (l : port_ref * port_ref) : port_ref * port_ref := rewire_link A Ar sc_N1 c d r2 l.
+  Local Definition rw1' (l : port_ref * port_ref) : port_ref * port_ref := rewire_link A Ar sc_N2 a b r1 l.
+
+  (* The fresh-link blocks (RHS links, freshened relative to the indicated net). *)
+  Local Definition fl1  := map (fun l : port_ref * port_ref => (freshen_pr A N (fst l), freshen_pr A N (snd l))) (nt_links (ru_rhs r1)).
+  Local Definition fl2  := map (fun l : port_ref * port_ref => (freshen_pr A N (fst l), freshen_pr A N (snd l))) (nt_links (ru_rhs r2)).
+  Local Definition fl1p := map (fun l : port_ref * port_ref => (freshen_pr A sc_N2 (fst l), freshen_pr A sc_N2 (snd l))) (nt_links (ru_rhs r1)).
+  Local Definition fl2p := map (fun l : port_ref * port_ref => (freshen_pr A sc_N1 (fst l), freshen_pr A sc_N1 (snd l))) (nt_links (ru_rhs r2)).
+
+  (* The kept links: links of [N] that are neither of the two fired main–main links. *)
+  Local Definition Lk :=
+    filter (fun l : port_ref * port_ref =>
+             negb (is_main_main_link a b l) && negb (is_main_main_link c d l)) (nt_links N).
+
+  (* --- Foundational facts --- *)
+
+  (* A fresh id of [N] is strictly above [sc_M], hence distinct from [a b c d]. *)
+  Local Lemma fresh_id_gt_scM (x : nat) : fresh_id A N x > sc_M.
+  Proof.
+    unfold fresh_id, sc_M, max_agent_id. lia.
+  Qed.
+
+  (* [a b c d] are agents of [N], hence bounded by [sc_M]. *)
+  Local Lemma abcd_le_scM (x : nat) (Hx : has_agent A N x) : x <= sc_M.
+  Proof.
+    apply (proj1 (has_agent_In A N x)) in Hx.
+    specialize (list_max_upper_bound (map fst (nt_agents N)) x Hx) as Hle.
+    unfold sc_M, max_agent_id in Hle.
+    exact Hle.
+  Qed.
+
+  (* [rewire_endpoint ... a1 a2 r] leaves [(x, p)] unchanged when [x] is neither [a1] nor [a2]. *)
+  Local Lemma rewire_endpoint_fixed (a1 a2 : nat) (r : Rule A) (x : nat) (p : nat)
+        (Hx1 : x <> a1) (Hx2 : x <> a2) :
+    rewire_endpoint A Ar N a1 a2 r (x, p) = (x, p).
+  Proof.
+    unfold rewire_endpoint.
+    destruct (Nat.eqb x a1) eqn:H1.
+    - exfalso. apply (proj1 (Nat.eqb_eq x a1)) in H1. apply Hx1. exact H1.
+    - destruct (Nat.eqb x a2) eqn:H2.
+      + exfalso. apply (proj1 (Nat.eqb_eq x a2)) in H2. apply Hx2. exact H2.
+      + reflexivity.
+  Qed.
+
+  (* [rewire_endpoint ... a1 a2 r] cannot produce a main port [(t, 0)] with [t <= sc_M]
+     unless the input already was [(t, 0)]: a rewired endpoint is a fresh id (> [sc_M]). *)
+  Local Lemma rewire_endpoint_t0 (a1 a2 : nat) (r : Rule A) (e : port_ref) (t : nat) (Ht : t <= sc_M) :
+    rewire_endpoint A Ar N a1 a2 r e = (t, 0) -> e = (t, 0).
+  Proof.
+    intros H.
+    destruct e as [x p].
+    unfold rewire_endpoint in H.
+    destruct (Nat.eqb x a1) eqn:Hxa.
+    - destruct (Nat.leb 1 p && Nat.leb p (Ar (fst (ru_lhs r)))) eqn:Hr.
+      + simpl in H.
+        destruct (nth (p - 1) (ru_iface r) (0, 0)) as [ia pa].
+        change ((fresh_id A N ia, pa) = (t, 0)) in H.
+        injection H as Ht0 Hp0.
+        unfold fresh_id in Ht0.
+        unfold sc_M in Ht.
+        lia.
+      + simpl in H.
+        injection H as Hx Hp0.
+        subst x. subst p.
+        reflexivity.
+    - destruct (Nat.eqb x a2) eqn:Hxb.
+      + destruct (Nat.leb 1 p && Nat.leb p (Ar (snd (ru_lhs r)))) eqn:Hr.
+        * simpl in H.
+          destruct (nth (Ar (fst (ru_lhs r)) + (p - 1)) (ru_iface r) (0, 0)) as [ib pb].
+          change ((fresh_id A N ib, pb) = (t, 0)) in H.
+          injection H as Ht0 Hp0.
+          unfold fresh_id in Ht0.
+          unfold sc_M in Ht.
+          lia.
+        * simpl in H.
+          injection H as Hx Hp0.
+          subst x. subst p.
+          reflexivity.
+      + simpl in H.
+        injection H as Hx Hp0.
+        subst x. subst p.
+        reflexivity.
+  Qed.
+
+  (* The cross-disjointness facts, in the orientations the rewiring lemmas need. *)
+  Local Lemma Hca : c <> a.
+  Proof. intro H. apply (proj1 Hdisj). symmetry. exact H. Qed.
+  Local Lemma Hcb : c <> b.
+  Proof. intro H. apply (proj1 (proj2 (proj2 Hdisj))). symmetry. exact H. Qed.
+  Local Lemma Hda : d <> a.
+  Proof. intro H. apply (proj1 (proj2 Hdisj)). symmetry. exact H. Qed.
+  Local Lemma Hdb : d <> b.
+  Proof. intro H. apply (proj2 (proj2 Hdisj)). symmetry. exact H. Qed.
+  Local Lemma Hac : a <> c.
+  Proof. exact (proj1 Hdisj). Qed.
+  Local Lemma Had : a <> d.
+  Proof. exact (proj1 (proj2 Hdisj)). Qed.
+  Local Lemma Hbc : b <> c.
+  Proof. exact (proj1 (proj2 (proj2 Hdisj))). Qed.
+  Local Lemma Hbd : b <> d.
+  Proof. exact (proj2 (proj2 (proj2 Hdisj))). Qed.
+
+  (* The two agents of each fired pair are distinct (the first conjunct of
+     [is_active_pair]), in both orientations. *)
+  Local Lemma Hab : a <> b.
+  Proof.
+    change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+    exact (proj1 Hap_ab).
+  Qed.
+  Local Lemma Hba : b <> a.
+  Proof. intro H. apply Hab. symmetry. exact H. Qed.
+  Local Lemma Hcd : c <> d.
+  Proof.
+    change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+    exact (proj1 Hap_cd).
+  Qed.
+  Local Lemma Hdc : d <> c.
+  Proof. intro H. apply Hcd. symmetry. exact H. Qed.
+
+  (* [rewire_endpoint ... a b r1] cannot produce [(c, 0)] or [(d, 0)] unless the
+     input already was that port: a rewired endpoint carries a fresh id (> [sc_M]),
+     while [c] and [d] are bounded by [sc_M]. *)
+  Local Lemma rw1_fixes_c0 (e : port_ref) :
+    rewire_endpoint A Ar N a b r1 e = (c, 0) -> e = (c, 0).
+  Proof.
+    intro H.
+    apply (rewire_endpoint_t0 a b r1 e c (abcd_le_scM c Hc)) in H.
+    exact H.
+  Qed.
+  Local Lemma rw1_fixes_d0 (e : port_ref) :
+    rewire_endpoint A Ar N a b r1 e = (d, 0) -> e = (d, 0).
+  Proof.
+    intro H.
+    apply (rewire_endpoint_t0 a b r1 e d (abcd_le_scM d Hd)) in H.
+    exact H.
+  Qed.
+
+  (* A link with [is_main_main_link c d l = true] has both [(c, 0)] and [(d, 0)] as endpoints. *)
+  Local Lemma mm_cd_endpoints (l : port_ref * port_ref) (H : is_main_main_link c d l = true) :
+    link_end l (c, 0) /\ link_end l (d, 0).
+  Proof.
+    destruct l as [[x u] [y v]].
+    unfold is_main_main_link in H.
+    simpl in H.
+    destruct (Nat.eqb x c) eqn:Hxc.
+    - (* x = c: the first disjunct holds *)
+      apply (proj1 (Nat.eqb_eq x c)) in Hxc.
+      assert (Hxd : Nat.eqb x d = false).
+      { destruct (Nat.eqb x d) eqn:Hb.
+        - exfalso.
+          apply (proj1 (Nat.eqb_eq x d)) in Hb.
+          change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+          apply (proj1 Hap_cd).
+          rewrite Hxc in Hb.
+          exact Hb.
+        - reflexivity. }
+      rewrite Hxd in H.
+      simpl in H.
+      { destruct (Nat.eqb u 0) eqn:Hu0.
+        - destruct (Nat.eqb y d) eqn:Hyd.
+          + destruct (Nat.eqb v 0) eqn:Hv0.
+            * { split.
+                - left.
+                  apply (proj1 (Nat.eqb_eq u 0)) in Hu0.
+                  subst x. subst u.
+                  reflexivity.
+                - right.
+                  apply (proj1 (Nat.eqb_eq y d)) in Hyd.
+                  apply (proj1 (Nat.eqb_eq v 0)) in Hv0.
+                  subst y. subst v.
+                  reflexivity. }
+            * exfalso. simpl in H. discriminate H.
+          + exfalso. simpl in H. discriminate H.
+        - exfalso. simpl in H. discriminate H. }
+    - (* x <> c: the second disjunct holds *)
+      simpl in H.
+      { destruct (Nat.eqb x d) eqn:Hxd.
+        - destruct (Nat.eqb u 0) eqn:Hu0.
+          + destruct (Nat.eqb y c) eqn:HyC.
+            * { destruct (Nat.eqb v 0) eqn:Hv0.
+                + split.
+                  - right.
+                    apply (proj1 (Nat.eqb_eq y c)) in HyC.
+                    apply (proj1 (Nat.eqb_eq v 0)) in Hv0.
+                    subst y. subst v.
+                    reflexivity.
+                  - left.
+                    apply (proj1 (Nat.eqb_eq x d)) in Hxd.
+                    apply (proj1 (Nat.eqb_eq u 0)) in Hu0.
+                    subst x. subst u.
+                    reflexivity.
+                + exfalso. simpl in H. discriminate H. }
+            * exfalso. simpl in H. discriminate H.
+          + exfalso. simpl in H. discriminate H.
+        - exfalso. simpl in H. discriminate H. }
+  Qed.
+
+  (* [rewire_endpoint ... c d r2] cannot produce [(a, 0)] or [(b, 0)] unless the
+     input already was that port (symmetric to [rw1_fixes_c0]/[rw1_fixes_d0]). *)
+  Local Lemma rw2'_fixes_a0 (e : port_ref) :
+    rewire_endpoint A Ar N c d r2 e = (a, 0) -> e = (a, 0).
+  Proof.
+    intro H.
+    apply (rewire_endpoint_t0 c d r2 e a (abcd_le_scM a Ha)) in H.
+    exact H.
+  Qed.
+  Local Lemma rw2'_fixes_b0 (e : port_ref) :
+    rewire_endpoint A Ar N c d r2 e = (b, 0) -> e = (b, 0).
+  Proof.
+    intro H.
+    apply (rewire_endpoint_t0 c d r2 e b (abcd_le_scM b Hb)) in H.
+    exact H.
+  Qed.
+
+  (* A link with [is_main_main_link a b l = true] has both [(a, 0)] and [(b, 0)]
+     as endpoints (symmetric to [mm_cd_endpoints]). *)
+  Local Lemma mm_ab_endpoints (l : port_ref * port_ref) (H : is_main_main_link a b l = true) :
+    link_end l (a, 0) /\ link_end l (b, 0).
+  Proof.
+    destruct l as [[x u] [y v]].
+    unfold is_main_main_link in H.
+    simpl in H.
+    destruct (Nat.eqb x a) eqn:Hxa.
+    - (* x = a: the first disjunct holds *)
+      apply (proj1 (Nat.eqb_eq x a)) in Hxa.
+      assert (Hxb : Nat.eqb x b = false).
+      { destruct (Nat.eqb x b) eqn:Hb.
+        - exfalso.
+          apply (proj1 (Nat.eqb_eq x b)) in Hb.
+          change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+          apply (proj1 Hap_ab).
+          rewrite Hxa in Hb.
+          exact Hb.
+        - reflexivity. }
+      rewrite Hxb in H.
+      simpl in H.
+      { destruct (Nat.eqb u 0) eqn:Hu0.
+        - destruct (Nat.eqb y b) eqn:Hyb.
+          + destruct (Nat.eqb v 0) eqn:Hv0.
+            * { split.
+                - left.
+                  apply (proj1 (Nat.eqb_eq u 0)) in Hu0.
+                  subst x. subst u.
+                  reflexivity.
+                - right.
+                  apply (proj1 (Nat.eqb_eq y b)) in Hyb.
+                  apply (proj1 (Nat.eqb_eq v 0)) in Hv0.
+                  subst y. subst v.
+                  reflexivity. }
+            * exfalso. simpl in H. discriminate H.
+          + exfalso. simpl in H. discriminate H.
+        - exfalso. simpl in H. discriminate H. }
+    - (* x <> a: the second disjunct holds *)
+      simpl in H.
+      { destruct (Nat.eqb x b) eqn:Hxb.
+        - destruct (Nat.eqb u 0) eqn:Hu0.
+          + destruct (Nat.eqb y a) eqn:HyA.
+            * { destruct (Nat.eqb v 0) eqn:Hv0.
+                + split.
+                  - right.
+                    apply (proj1 (Nat.eqb_eq y a)) in HyA.
+                    apply (proj1 (Nat.eqb_eq v 0)) in Hv0.
+                    subst y. subst v.
+                    reflexivity.
+                  - left.
+                    apply (proj1 (Nat.eqb_eq x b)) in Hxb.
+                    apply (proj1 (Nat.eqb_eq u 0)) in Hu0.
+                    subst x. subst u.
+                    reflexivity.
+                + exfalso. simpl in H. discriminate H. }
+            * exfalso. simpl in H. discriminate H.
+          + exfalso. simpl in H. discriminate H.
+        - exfalso. simpl in H. discriminate H. }
+  Qed.
+
+  (* The main–main tests compute to [true] on the two concrete orientations
+     (the [eqb]s on the variable agents [c d] / [a b] do not compute, so the
+     equalities are proved by [Nat.eqb_eq] and the disjointness). *)
+  Local Lemma mm_cd_true_concrete :
+    is_main_main_link c d ((c, 0), (d, 0)) = true
+    /\ is_main_main_link c d ((d, 0), (c, 0)) = true.
+  Proof.
+    split.
+    - unfold is_main_main_link. simpl.
+      assert (Hcc : Nat.eqb c c = true). { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+      assert (Hdd : Nat.eqb d d = true). { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+      assert (Hcd_f : Nat.eqb c d = false).
+      { destruct (Nat.eqb c d) eqn:Hb.
+        - exfalso. apply (proj1 (Nat.eqb_eq c d)) in Hb.
+          change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+          apply (proj1 Hap_cd). exact Hb.
+        - reflexivity. }
+      rewrite Hcc, Hdd, Hcd_f.
+      simpl.
+      reflexivity.
+    - unfold is_main_main_link. simpl.
+      assert (Hcc : Nat.eqb c c = true). { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+      assert (Hdd : Nat.eqb d d = true). { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+      assert (Hdc_f : Nat.eqb d c = false).
+      { destruct (Nat.eqb d c) eqn:Hb.
+        - exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb.
+          change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+          apply (proj1 Hap_cd). symmetry. exact Hb.
+        - reflexivity. }
+      rewrite Hcc, Hdd, Hdc_f.
+      simpl.
+      reflexivity.
+  Qed.
+
+  Local Lemma mm_ab_true_concrete :
+    is_main_main_link a b ((a, 0), (b, 0)) = true
+    /\ is_main_main_link a b ((b, 0), (a, 0)) = true.
+  Proof.
+    split.
+    - unfold is_main_main_link. simpl.
+      assert (Haa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+      assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+      assert (Hab_f : Nat.eqb a b = false).
+      { destruct (Nat.eqb a b) eqn:Hb.
+        - exfalso. apply (proj1 (Nat.eqb_eq a b)) in Hb.
+          change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+          apply (proj1 Hap_ab). exact Hb.
+        - reflexivity. }
+      rewrite Haa, Hbb, Hab_f.
+      simpl.
+      reflexivity.
+    - unfold is_main_main_link. simpl.
+      assert (Haa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+      assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+      assert (Hba_f : Nat.eqb b a = false).
+      { destruct (Nat.eqb b a) eqn:Hb.
+        - exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb.
+          change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+          apply (proj1 Hap_ab). symmetry. exact Hb.
+        - reflexivity. }
+      rewrite Haa, Hbb, Hba_f.
+      simpl.
+      reflexivity.
+  Qed.
+
+  (* --- [rw1] preserves the [c d] main–main test --- *)
+
+  (* If [rw1 l] is the [c d] main–main link, so is [l]: each endpoint of [rw1 l]
+     is either the original endpoint or a fresh id (> [sc_M]), and [c d] are
+     bounded by [sc_M]. *)
+  Local Lemma rw1_mm_cd_true (l : port_ref * port_ref) :
+    is_main_main_link c d (rw1 l) = true -> is_main_main_link c d l = true.
+  Proof.
+    intro H.
+    destruct l as [[x u] [y v]].
+    set (e1 := rewire_endpoint A Ar N a b r1 (x, u)).
+    set (e2 := rewire_endpoint A Ar N a b r1 (y, v)).
+    change (is_main_main_link c d (e1, e2) = true) in H.
+    assert (Hep : link_end (e1, e2) (c, 0) /\ link_end (e1, e2) (d, 0)).
+    { exact (mm_cd_endpoints (e1, e2) H). }
+    destruct Hep as [Hc0 Hd0].
+    destruct Hc0 as [Hcf|Hcs].
+    - (* e1 = (c, 0) *)
+      assert (Hxf : (x, u) = (c, 0)).
+      { exact (rw1_fixes_c0 (x, u) Hcf). }
+      destruct Hd0 as [Hdf|Hds].
+      + (* e1 = (d, 0) as well: forces [c = d]. *)
+        assert (Hxd : (x, u) = (d, 0)).
+        { exact (rw1_fixes_d0 (x, u) Hdf). }
+        exfalso.
+        rewrite Hxf in Hxd.
+        injection Hxd as Hcd.
+        change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+        apply (proj1 Hap_cd).
+        exact Hcd.
+      + (* e2 = (d, 0): [l] is the [c d] main–main link. *)
+        assert (Hys : (y, v) = (d, 0)).
+        { exact (rw1_fixes_d0 (y, v) Hds). }
+        injection Hxf as Hx Hu.
+        subst x. subst u.
+        injection Hys as Hy Hv.
+        subst y. subst v.
+        exact (proj1 mm_cd_true_concrete).
+    - (* e2 = (c, 0) *)
+      assert (Hys : (y, v) = (c, 0)).
+      { exact (rw1_fixes_c0 (y, v) Hcs). }
+      destruct Hd0 as [Hdf|Hds].
+      + (* e1 = (d, 0): [l] is the [c d] main–main link (swapped). *)
+        assert (Hxf : (x, u) = (d, 0)).
+        { exact (rw1_fixes_d0 (x, u) Hdf). }
+        injection Hxf as Hx Hu.
+        subst x. subst u.
+        injection Hys as Hy Hv.
+        subst y. subst v.
+        exact (proj2 mm_cd_true_concrete).
+      + (* e2 = (d, 0) as well: forces [c = d]. *)
+        assert (Hyd : (y, v) = (d, 0)).
+        { exact (rw1_fixes_d0 (y, v) Hds). }
+        exfalso.
+        rewrite Hys in Hyd.
+        injection Hyd as Hcd.
+        change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+        apply (proj1 Hap_cd).
+        exact Hcd.
+  Qed.
+
+  (* If [l] is the [c d] main–main link, so is [rw1 l]: [c d] are neither [a]
+     nor [b], so [rw1] fixes both endpoints. *)
+  Local Lemma rw1_mm_cd_false (l : port_ref * port_ref) :
+    is_main_main_link c d l = true -> is_main_main_link c d (rw1 l) = true.
+  Proof.
+    intro H.
+    destruct l as [[x u] [y v]].
+    assert (Hep : link_end ((x, u), (y, v)) (c, 0) /\ link_end ((x, u), (y, v)) (d, 0)).
+    { exact (mm_cd_endpoints ((x, u), (y, v)) H). }
+    destruct Hep as [Hc0 Hd0].
+    destruct Hc0 as [Hcf|Hcs].
+    - (* (x, u) = (c, 0) *)
+      injection Hcf as Hx Hu.
+      subst x. subst u.
+      destruct Hd0 as [Hdf|Hds].
+      + (* (c, 0) = (d, 0): impossible. *)
+        exfalso.
+        injection Hdf as Hcd.
+        change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+        apply (proj1 Hap_cd).
+        exact Hcd.
+      + (* (y, v) = (d, 0): [rw1] fixes both endpoints, so [rw1 l = l]. *)
+        injection Hds as Hy Hv.
+        subst y. subst v.
+        assert (Hrw : rw1 ((c, 0), (d, 0)) = ((c, 0), (d, 0))).
+        { unfold rw1, rewire_link.
+          f_equal.
+          - exact (rewire_endpoint_fixed a b r1 c 0 Hca Hcb).
+          - exact (rewire_endpoint_fixed a b r1 d 0 Hda Hdb). }
+        exact (eq_trans (f_equal (is_main_main_link c d) Hrw)
+                        (proj1 mm_cd_true_concrete)).
+    - (* (y, v) = (c, 0) *)
+      injection Hcs as Hy Hv.
+      subst y. subst v.
+      destruct Hd0 as [Hdf|Hds].
+      + (* (x, u) = (d, 0): [rw1] fixes both endpoints, so [rw1 l = l]. *)
+        injection Hdf as Hx Hu.
+        subst x. subst u.
+        assert (Hrw : rw1 ((d, 0), (c, 0)) = ((d, 0), (c, 0))).
+        { unfold rw1, rewire_link.
+          f_equal.
+          - exact (rewire_endpoint_fixed a b r1 d 0 Hda Hdb).
+          - exact (rewire_endpoint_fixed a b r1 c 0 Hca Hcb). }
+        exact (eq_trans (f_equal (is_main_main_link c d) Hrw)
+                        (proj2 mm_cd_true_concrete)).
+      + (* (c, 0) = (d, 0): impossible. *)
+        exfalso.
+        injection Hds as Hcd.
+        change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+        apply (proj1 Hap_cd).
+        exact Hcd.
+  Qed.
+
+  Local Lemma rw1_pres_mm_cd (l : port_ref * port_ref) :
+    is_main_main_link c d (rw1 l) = is_main_main_link c d l.
+  Proof.
+    destruct (is_main_main_link c d (rw1 l)) eqn:H1.
+    - destruct (is_main_main_link c d l) eqn:H2.
+      + reflexivity.
+      + exfalso.
+        apply (rw1_mm_cd_true l) in H1.
+        rewrite H1 in H2.
+        discriminate H2.
+    - destruct (is_main_main_link c d l) eqn:H2.
+      + exfalso.
+        apply (rw1_mm_cd_false l) in H2.
+        rewrite H2 in H1.
+        discriminate H1.
+      + reflexivity.
+  Qed.
+
+  (* The symmetric facts for [rw2'] and the [a b] main–main test. *)
+
+  Local Lemma rw2'_mm_ab_true (l : port_ref * port_ref) :
+    is_main_main_link a b (rw2' l) = true -> is_main_main_link a b l = true.
+  Proof.
+    intro H.
+    destruct l as [[x u] [y v]].
+    set (e1 := rewire_endpoint A Ar N c d r2 (x, u)).
+    set (e2 := rewire_endpoint A Ar N c d r2 (y, v)).
+    change (is_main_main_link a b (e1, e2) = true) in H.
+    assert (Hep : link_end (e1, e2) (a, 0) /\ link_end (e1, e2) (b, 0)).
+    { exact (mm_ab_endpoints (e1, e2) H). }
+    destruct Hep as [Ha0 Hb0].
+    destruct Ha0 as [Haf|Has].
+    - (* e1 = (a, 0) *)
+      assert (Hxf : (x, u) = (a, 0)).
+      { exact (rw2'_fixes_a0 (x, u) Haf). }
+      destruct Hb0 as [Hbf|Hbs].
+      + (* e1 = (b, 0) as well: forces [a = b]. *)
+        assert (Hxb : (x, u) = (b, 0)).
+        { exact (rw2'_fixes_b0 (x, u) Hbf). }
+        exfalso.
+        rewrite Hxf in Hxb.
+        injection Hxb as Hab.
+        change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+        apply (proj1 Hap_ab).
+        exact Hab.
+      + (* e2 = (b, 0): [l] is the [a b] main–main link. *)
+        assert (Hys : (y, v) = (b, 0)).
+        { exact (rw2'_fixes_b0 (y, v) Hbs). }
+        injection Hxf as Hx Hu.
+        subst x. subst u.
+        injection Hys as Hy Hv.
+        subst y. subst v.
+        exact (proj1 mm_ab_true_concrete).
+    - (* e2 = (a, 0) *)
+      assert (Hys : (y, v) = (a, 0)).
+      { exact (rw2'_fixes_a0 (y, v) Has). }
+      destruct Hb0 as [Hbf|Hbs].
+      + (* e1 = (b, 0): [l] is the [a b] main–main link (swapped). *)
+        assert (Hxf : (x, u) = (b, 0)).
+        { exact (rw2'_fixes_b0 (x, u) Hbf). }
+        injection Hxf as Hx Hu.
+        subst x. subst u.
+        injection Hys as Hy Hv.
+        subst y. subst v.
+        exact (proj2 mm_ab_true_concrete).
+      + (* e2 = (b, 0) as well: forces [a = b]. *)
+        assert (Hyb : (y, v) = (b, 0)).
+        { exact (rw2'_fixes_b0 (y, v) Hbs). }
+        exfalso.
+        rewrite Hys in Hyb.
+        injection Hyb as Hab.
+        change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+        apply (proj1 Hap_ab).
+        exact Hab.
+  Qed.
+
+  Local Lemma rw2'_mm_ab_false (l : port_ref * port_ref) :
+    is_main_main_link a b l = true -> is_main_main_link a b (rw2' l) = true.
+  Proof.
+    intro H.
+    destruct l as [[x u] [y v]].
+    assert (Hep : link_end ((x, u), (y, v)) (a, 0) /\ link_end ((x, u), (y, v)) (b, 0)).
+    { exact (mm_ab_endpoints ((x, u), (y, v)) H). }
+    destruct Hep as [Ha0 Hb0].
+    destruct Ha0 as [Haf|Has].
+    - (* (x, u) = (a, 0) *)
+      injection Haf as Hx Hu.
+      subst x. subst u.
+      destruct Hb0 as [Hbf|Hbs].
+      + (* (a, 0) = (b, 0): impossible. *)
+        exfalso.
+        injection Hbf as Hab.
+        change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+        apply (proj1 Hap_ab).
+        exact Hab.
+      + (* (y, v) = (b, 0): [rw2'] fixes both endpoints, so [rw2' l = l]. *)
+        injection Hbs as Hy Hv.
+        subst y. subst v.
+        assert (Hrw : rw2' ((a, 0), (b, 0)) = ((a, 0), (b, 0))).
+        { unfold rw2', rewire_link.
+          f_equal.
+          - exact (rewire_endpoint_fixed c d r2 a 0 Hac Had).
+          - exact (rewire_endpoint_fixed c d r2 b 0 Hbc Hbd). }
+        exact (eq_trans (f_equal (is_main_main_link a b) Hrw)
+                        (proj1 mm_ab_true_concrete)).
+    - (* (y, v) = (a, 0) *)
+      injection Has as Hy Hv.
+      subst y. subst v.
+      destruct Hb0 as [Hbf|Hbs].
+      + (* (x, u) = (b, 0): [rw2'] fixes both endpoints, so [rw2' l = l]. *)
+        injection Hbf as Hx Hu.
+        subst x. subst u.
+        assert (Hrw : rw2' ((b, 0), (a, 0)) = ((b, 0), (a, 0))).
+        { unfold rw2', rewire_link.
+          f_equal.
+          - exact (rewire_endpoint_fixed c d r2 b 0 Hbc Hbd).
+          - exact (rewire_endpoint_fixed c d r2 a 0 Hac Had). }
+        exact (eq_trans (f_equal (is_main_main_link a b) Hrw)
+                        (proj2 mm_ab_true_concrete)).
+      + (* (a, 0) = (b, 0): impossible. *)
+        exfalso.
+        injection Hbs as Hab.
+        change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+        apply (proj1 Hap_ab).
+        exact Hab.
+  Qed.
+
+  Local Lemma rw2'_pres_mm_ab (l : port_ref * port_ref) :
+    is_main_main_link a b (rw2' l) = is_main_main_link a b l.
+  Proof.
+    destruct (is_main_main_link a b (rw2' l)) eqn:H1.
+    - destruct (is_main_main_link a b l) eqn:H2.
+      + reflexivity.
+      + exfalso.
+        apply (rw2'_mm_ab_true l) in H1.
+        rewrite H1 in H2.
+        discriminate H2.
+    - destruct (is_main_main_link a b l) eqn:H2.
+      + exfalso.
+        apply (rw2'_mm_ab_false l) in H2.
+        rewrite H2 in H1.
+        discriminate H1.
+      + reflexivity.
+  Qed.
+
+  (* ========================================================================== *)
+  (* Stage 5 (cont.): fresh-link facts and filter machinery.                    *)
+  (* ========================================================================== *)
+
+  (* Pointwise equality on the elements of [l] implies equality of the maps
+     (the [port_ref * port_ref] analogue of [map_ptw]). *)
+  Local Lemma map_ptw_link
+      (f g : port_ref * port_ref -> port_ref * port_ref) (l : list (port_ref * port_ref)) :
+    (forall x, In x l -> f x = g x) -> map f l = map g l.
+  Proof.
+    induction l as [|h t IH]; intros Hpt; simpl.
+    - reflexivity.
+    - assert (Hh : f h = g h). { exact (Hpt h (in_eq h t)). }
+      rewrite Hh.
+      assert (Ht : forall x, In x t -> f x = g x).
+      { intros x Hx. exact (Hpt x (in_cons h x t Hx)). }
+      rewrite (IH Ht). reflexivity.
+  Qed.
+
+  (* [rw2] fixes the fresh links of [r1] (relative to [N]): their agent ids are
+     fresh ids of [N] (> [sc_M]), hence distinct from [c d]. *)
+  Local Lemma rw2_fresh_fixed (x p : nat) :
+    rewire_endpoint A Ar sc_N1 c d r2 (fresh_id A N x, p) = (fresh_id A N x, p).
+  Proof.
+    assert (Hc_le : c <= sc_M). { exact (abcd_le_scM c Hc). }
+    assert (Hd_le : d <= sc_M). { exact (abcd_le_scM d Hd). }
+    assert (Hgt : fresh_id A N x > sc_M). { exact (fresh_id_gt_scM x). }
+    unfold rewire_endpoint.
+    destruct (Nat.eqb (fresh_id A N x) c) eqn:H1.
+    - exfalso.
+      apply (proj1 (Nat.eqb_eq (fresh_id A N x) c)) in H1.
+      unfold fresh_id, sc_M in H1, Hgt, Hc_le.
+      lia.
+    - destruct (Nat.eqb (fresh_id A N x) d) eqn:H2.
+      + exfalso.
+        apply (proj1 (Nat.eqb_eq (fresh_id A N x) d)) in H2.
+        unfold fresh_id, sc_M in H2, Hgt, Hd_le.
+        lia.
+      + reflexivity.
+  Qed.
+
+  (* [rw1'] fixes the fresh links of [r2] (relative to [N]): their agent ids are
+     fresh ids of [N] (> [sc_M]), hence distinct from [a b]. *)
+  Local Lemma rw1'_fresh_fixed (x p : nat) :
+    rewire_endpoint A Ar sc_N2 a b r1 (fresh_id A N x, p) = (fresh_id A N x, p).
+  Proof.
+    assert (Ha_le : a <= sc_M). { exact (abcd_le_scM a Ha). }
+    assert (Hb_le : b <= sc_M). { exact (abcd_le_scM b Hb). }
+    assert (Hgt : fresh_id A N x > sc_M). { exact (fresh_id_gt_scM x). }
+    unfold rewire_endpoint.
+    destruct (Nat.eqb (fresh_id A N x) a) eqn:H1.
+    - exfalso.
+      apply (proj1 (Nat.eqb_eq (fresh_id A N x) a)) in H1.
+      unfold fresh_id, sc_M in H1, Hgt, Ha_le.
+      lia.
+    - destruct (Nat.eqb (fresh_id A N x) b) eqn:H2.
+      + exfalso.
+        apply (proj1 (Nat.eqb_eq (fresh_id A N x) b)) in H2.
+        unfold fresh_id, sc_M in H2, Hgt, Hb_le.
+        lia.
+      + reflexivity.
+  Qed.
+
+  (* [rw2] is the identity on the fresh links of [r1] (elementwise). *)
+  Local Lemma rw2_fixes_fl1_elem (l : port_ref * port_ref) :
+    rw2 ((freshen_pr A N (fst l), freshen_pr A N (snd l)))
+      = (freshen_pr A N (fst l), freshen_pr A N (snd l)).
+  Proof.
+    unfold rw2, rewire_link.
+    destruct l as [[x u] [y v]].
+    simpl.
+    f_equal.
+    - exact (rw2_fresh_fixed x u).
+    - exact (rw2_fresh_fixed y v).
+  Qed.
+
+  Local Lemma map_rw2_fl1_gen (L : list (port_ref * port_ref)) :
+    map rw2 (map (fun l : port_ref * port_ref =>
+             (freshen_pr A N (fst l), freshen_pr A N (snd l))) L)
+      = map (fun l : port_ref * port_ref =>
+             (freshen_pr A N (fst l), freshen_pr A N (snd l))) L.
+  Proof.
+    induction L as [|h t IH]; simpl.
+    - reflexivity.
+    - assert (Hh : rw2 ((freshen_pr A N (fst h), freshen_pr A N (snd h)))
+               = (freshen_pr A N (fst h), freshen_pr A N (snd h))).
+      { exact (rw2_fixes_fl1_elem h). }
+      rewrite Hh.
+      rewrite IH.
+      reflexivity.
+  Qed.
+
+  Local Lemma map_rw2_fl1 : map rw2 fl1 = fl1.
+  Proof.
+    unfold fl1.
+    exact (map_rw2_fl1_gen (nt_links (ru_rhs r1))).
+  Qed.
+
+  (* [rw1'] is the identity on the fresh links of [r2] (elementwise). *)
+  Local Lemma rw1'_fixes_fl2_elem (l : port_ref * port_ref) :
+    rw1' ((freshen_pr A N (fst l), freshen_pr A N (snd l)))
+      = (freshen_pr A N (fst l), freshen_pr A N (snd l)).
+  Proof.
+    unfold rw1', rewire_link.
+    destruct l as [[x u] [y v]].
+    simpl.
+    f_equal.
+    - exact (rw1'_fresh_fixed x u).
+    - exact (rw1'_fresh_fixed y v).
+  Qed.
+
+  Local Lemma map_rw1'_fl2_gen (L : list (port_ref * port_ref)) :
+    map rw1' (map (fun l : port_ref * port_ref =>
+             (freshen_pr A N (fst l), freshen_pr A N (snd l))) L)
+      = map (fun l : port_ref * port_ref =>
+             (freshen_pr A N (fst l), freshen_pr A N (snd l))) L.
+  Proof.
+    induction L as [|h t IH]; simpl.
+    - reflexivity.
+    - assert (Hh : rw1' ((freshen_pr A N (fst h), freshen_pr A N (snd h)))
+               = (freshen_pr A N (fst h), freshen_pr A N (snd h))).
+      { exact (rw1'_fixes_fl2_elem h). }
+      rewrite Hh.
+      rewrite IH.
+      reflexivity.
+  Qed.
+
+  Local Lemma map_rw1'_fl2 : map rw1' fl2 = fl2.
+  Proof.
+    unfold fl2.
+    exact (map_rw1'_fl2_gen (nt_links (ru_rhs r2))).
+  Qed.
+
+  (* A fresh link of [r1] is never the [c d] main–main link: both endpoint agent
+     ids are fresh ids of [N] (> [sc_M]), while [c d] are bounded by [sc_M]. *)
+  Local Lemma fl1_mm_cd_false (x y p q : nat) :
+    is_main_main_link c d ((fresh_id A N x, p), (fresh_id A N y, q)) = false.
+  Proof.
+    assert (Hc_le : c <= sc_M). { exact (abcd_le_scM c Hc). }
+    assert (Hd_le : d <= sc_M). { exact (abcd_le_scM d Hd). }
+    assert (Hgt : fresh_id A N x > sc_M). { exact (fresh_id_gt_scM x). }
+    unfold is_main_main_link. simpl.
+    assert (Hxc : Nat.eqb (fresh_id A N x) c = false).
+    { destruct (Nat.eqb (fresh_id A N x) c) eqn:Hb.
+      - exfalso. apply (proj1 (Nat.eqb_eq (fresh_id A N x) c)) in Hb.
+        unfold fresh_id, sc_M in Hb, Hgt, Hc_le. lia.
+      - reflexivity. }
+    assert (Hxd : Nat.eqb (fresh_id A N x) d = false).
+    { destruct (Nat.eqb (fresh_id A N x) d) eqn:Hb.
+      - exfalso. apply (proj1 (Nat.eqb_eq (fresh_id A N x) d)) in Hb.
+        unfold fresh_id, sc_M in Hb, Hgt, Hd_le. lia.
+      - reflexivity. }
+    rewrite Hxc, Hxd.
+    simpl.
+    reflexivity.
+  Qed.
+
+  (* A fresh link of [r2] is never the [a b] main–main link (symmetric). *)
+  Local Lemma fl2_mm_ab_false (x y p q : nat) :
+    is_main_main_link a b ((fresh_id A N x, p), (fresh_id A N y, q)) = false.
+  Proof.
+    assert (Ha_le : a <= sc_M). { exact (abcd_le_scM a Ha). }
+    assert (Hb_le : b <= sc_M). { exact (abcd_le_scM b Hb). }
+    assert (Hgt : fresh_id A N x > sc_M). { exact (fresh_id_gt_scM x). }
+    unfold is_main_main_link. simpl.
+    assert (Hxa : Nat.eqb (fresh_id A N x) a = false).
+    { destruct (Nat.eqb (fresh_id A N x) a) eqn:Hb.
+      - exfalso. apply (proj1 (Nat.eqb_eq (fresh_id A N x) a)) in Hb.
+        unfold fresh_id, sc_M in Hb, Hgt, Ha_le. lia.
+      - reflexivity. }
+    assert (Hxb : Nat.eqb (fresh_id A N x) b = false).
+    { destruct (Nat.eqb (fresh_id A N x) b) eqn:Hb.
+      - exfalso. apply (proj1 (Nat.eqb_eq (fresh_id A N x) b)) in Hb.
+        unfold fresh_id, sc_M in Hb, Hgt, Hb_le. lia.
+      - reflexivity. }
+    rewrite Hxa, Hxb.
+    simpl.
+    reflexivity.
+  Qed.
+
+  (* The [c d] main–main filter keeps all of [fl1] (and the [a b] filter keeps
+     all of [fl2]). *)
+  Local Lemma filter_fl1_mm_cd :
+    filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) fl1 = fl1.
+  Proof.
+    rewrite <- filter_true.
+    apply filter_ext_in.
+    intros l Hl.
+    apply (proj1 (in_map_iff (fun l' : port_ref * port_ref =>
+             (freshen_pr A N (fst l'), freshen_pr A N (snd l')))
+           (nt_links (ru_rhs r1)) l)) in Hl.
+    destruct Hl as [l' [Hleq Hlin]].
+    subst l.
+    destruct l' as [[x u] [y v]].
+    simpl.
+    exact (proj2 (negb_true_iff
+             (is_main_main_link c d ((fresh_id A N x, u), (fresh_id A N y, v))))
+             (fl1_mm_cd_false x y u v)).
+  Qed.
+
+  Local Lemma filter_fl2_mm_ab :
+    filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) fl2 = fl2.
+  Proof.
+    rewrite <- filter_true.
+    apply filter_ext_in.
+    intros l Hl.
+    apply (proj1 (in_map_iff (fun l' : port_ref * port_ref =>
+             (freshen_pr A N (fst l'), freshen_pr A N (snd l')))
+           (nt_links (ru_rhs r2)) l)) in Hl.
+    destruct Hl as [l' [Hleq Hlin]].
+    subst l.
+    destruct l' as [[x u] [y v]].
+    simpl.
+    exact (proj2 (negb_true_iff
+             (is_main_main_link a b ((fresh_id A N x, u), (fresh_id A N y, v))))
+             (fl2_mm_ab_false x y u v)).
+  Qed.
+
+  (* --- Filter machinery --- *)
+
+  (* Filtering twice is filtering with the conjunction (the [port_ref * port_ref]
+     analogue of [filter_fusion]). *)
+  Local Lemma filter_fusion_link (f g : (port_ref * port_ref) -> bool)
+      (l : list (port_ref * port_ref)) :
+    filter g (filter f l) = filter (fun x => f x && g x) l.
+  Proof.
+    induction l as [|h t IH]; simpl.
+    - reflexivity.
+    - destruct (f h) eqn:Hf.
+      + destruct (g h) eqn:Hg.
+        * change ((if g h then h :: filter g (filter f t) else filter g (filter f t))
+                  = h :: filter (fun x : port_ref * port_ref => f x && g x) t).
+          rewrite Hg. rewrite IH. reflexivity.
+        * change ((if g h then h :: filter g (filter f t) else filter g (filter f t))
+                  = filter (fun x : port_ref * port_ref => f x && g x) t).
+          rewrite Hg. rewrite IH. reflexivity.
+      + change (filter g (filter f t)
+                = filter (fun x : port_ref * port_ref => f x && g x) t).
+        rewrite IH. reflexivity.
+  Qed.
+
+  (* [rw1] commutes with the [c d] main–main filter: [rw1] preserves the test
+     ([rw1_pres_mm_cd]), so a link survives the filter after [rw1] iff it did
+     before. *)
+  Local Lemma filter_map_rw1 (L : list (port_ref * port_ref)) :
+    filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) (map rw1 L)
+      = map rw1 (filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) L).
+  Proof.
+    set (P := fun l : port_ref * port_ref => negb (is_main_main_link c d l)).
+    induction L as [|h t IH]; simpl.
+    - reflexivity.
+    - change ((if P (rw1 h) then rw1 h :: filter P (map rw1 t) else filter P (map rw1 t))
+              = map rw1 (if P h then h :: filter P t else filter P t)).
+      assert (HP : P (rw1 h) = P h).
+      { unfold P. exact (f_equal negb (rw1_pres_mm_cd h)). }
+      rewrite HP.
+      destruct (P h) eqn:HpH.
+      + simpl. rewrite IH. reflexivity.
+      + simpl. rewrite IH. reflexivity.
+  Qed.
+
+  (* [rw2'] commutes with the [a b] main–main filter (symmetric). *)
+  Local Lemma filter_map_rw2' (L : list (port_ref * port_ref)) :
+    filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) (map rw2' L)
+      = map rw2' (filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) L).
+  Proof.
+    set (P := fun l : port_ref * port_ref => negb (is_main_main_link a b l)).
+    induction L as [|h t IH]; simpl.
+    - reflexivity.
+    - change ((if P (rw2' h) then rw2' h :: filter P (map rw2' t) else filter P (map rw2' t))
+              = map rw2' (if P h then h :: filter P t else filter P t)).
+      assert (HP : P (rw2' h) = P h).
+      { unfold P. exact (f_equal negb (rw2'_pres_mm_ab h)). }
+      rewrite HP.
+      destruct (P h) eqn:HpH.
+      + simpl. rewrite IH. reflexivity.
+      + simpl. rewrite IH. reflexivity.
+  Qed.
+
+  (* [filter P (filter Q l)] commutes (the [port_ref * port_ref] analogue of
+     [filter_comm]). *)
+  Local Lemma filter_comm_link (P Q : (port_ref * port_ref) -> bool)
+      (l : list (port_ref * port_ref)) :
+    filter P (filter Q l) = filter Q (filter P l).
+  Proof.
+    rewrite (filter_fusion_link P Q l), (filter_fusion_link Q P l).
+    apply (filter_ext_in (fun x => Q x && P x) (fun x => P x && Q x) l).
+    intros x Hx.
+    change ((Q x && P x) = (P x && Q x)).
+    destruct (P x) eqn:Hp; destruct (Q x) eqn:Hq; simpl; reflexivity.
+  Qed.
+
+  (* --- Link block decompositions --- *)
+
+  (* The links of [sc_N1]: the rewired kept links of [N] (minus the [a b]
+     main–main link), followed by the fresh links of the [r1] RHS. *)
+  Local Lemma sc_links_N1 :
+    nt_links sc_N1
+      = map rw1 (filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) (nt_links N))
+        ++ fl1.
+  Proof.
+    change (map rw1 (filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) (nt_links N))
+           ++ fl1
+           = map rw1 (filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) (nt_links N))
+             ++ fl1).
+    reflexivity.
+  Qed.
+
+  (* Symmetric for [sc_N2]. *)
+  Local Lemma sc_links_N2 :
+    nt_links sc_N2
+      = map rw2' (filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) (nt_links N))
+        ++ fl2.
+  Proof.
+    change (map rw2' (filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) (nt_links N))
+           ++ fl2
+           = map rw2' (filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) (nt_links N))
+             ++ fl2).
+    reflexivity.
+  Qed.
+
+  (* The links of [sc_N12] (= splice [r2] over [sc_N1]): the kept links of [N]
+     rewired by [rw1] then [rw2], followed by the [r1] fresh links (untouched
+     by [rw2]) and the [r2] fresh links (freshened relative to [sc_N1]). *)
+  Local Lemma sc_links_N12 :
+    nt_links sc_N12
+      = map (fun l : port_ref * port_ref => rw2 (rw1 l)) Lk ++ fl1 ++ fl2p.
+  Proof.
+    change (map rw2 (filter (fun l : port_ref * port_ref => negb (is_main_main_link c d l)) (nt_links sc_N1))
+           ++ fl2p
+           = map (fun l : port_ref * port_ref => rw2 (rw1 l)) Lk ++ fl1 ++ fl2p).
+    rewrite sc_links_N1.
+    rewrite filter_app.
+    rewrite filter_fl1_mm_cd.
+    rewrite filter_map_rw1.
+    rewrite filter_fusion_link.
+    unfold Lk.
+    rewrite map_app.
+    rewrite map_map.
+    rewrite map_rw2_fl1.
+    rewrite <- app_assoc.
+    reflexivity.
+  Qed.
+
+  (* Symmetric for [sc_N21] (= splice [r1] over [sc_N2]). *)
+  Local Lemma sc_links_N21 :
+    nt_links sc_N21
+      = map (fun l : port_ref * port_ref => rw1' (rw2' l)) Lk ++ fl2 ++ fl1p.
+  Proof.
+    change (map rw1' (filter (fun l : port_ref * port_ref => negb (is_main_main_link a b l)) (nt_links sc_N2))
+           ++ fl1p
+           = map (fun l : port_ref * port_ref => rw1' (rw2' l)) Lk ++ fl2 ++ fl1p).
+    rewrite sc_links_N2.
+    rewrite filter_app.
+    rewrite filter_fl2_mm_ab.
+    rewrite filter_map_rw2'.
+    rewrite filter_comm_link.
+    rewrite filter_fusion_link.
+    unfold Lk.
+    rewrite map_app.
+    rewrite map_map.
+    rewrite map_rw1'_fl2.
+    rewrite <- app_assoc.
+    reflexivity.
+  Qed.
+
+  (* --- Fresh-block map equalities --- *)
+
+  (* A fresh id of [N] (relative to the [r1] RHS) is mapped by [comm_map] to
+     the corresponding fresh id of [sc_N2] (relative to the [r1] RHS). *)
+  Local Lemma cm_fresh1 (x : nat) (Hx : In x (map fst (nt_agents (ru_rhs r1)))) :
+    comm_map sc_M sc_M1 sc_M2 (fresh_id A N x) = fresh_id A sc_N2 x.
+  Proof.
+    apply (proj1 (in_map_iff fst (nt_agents (ru_rhs r1)) x)) in Hx.
+    destruct Hx as [q [Hqx Hqin]].
+    subst x.
+    assert (Hle : fresh_id A N (fst q) <= sc_M1). { exact (sc_M1_ge_fresh1 q Hqin). }
+    assert (Hgt : sc_M < fresh_id A N (fst q)). { exact (fresh_id_gt_scM (fst q)). }
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A N (fst q))
+               = shift sc_M2 sc_M (fresh_id A N (fst q))).
+    { apply cm_r1. exact Hgt. exact Hle. }
+    rewrite Hcm.
+    unfold fresh_id, sc_M, sc_M2.
+    assert (Harg : max_agent_id A N + 1 + fst q = fst q + max_agent_id A N + 1). { lia. }
+    rewrite Harg.
+    change (shift sc_M2 sc_M (fst q + sc_M + 1) = max_agent_id A sc_N2 + 1 + fst q).
+    rewrite (shift_r1 (fst q)).
+    unfold sc_M2.
+    lia.
+  Qed.
+
+  (* [cm_pair_link] sends the [r1] fresh links (freshened rel. [N]) to the
+     [r1] fresh links freshened rel. [sc_N2] (= [fl1p]). *)
+  Local Lemma map_cm_fl1 : map cm_pair_link fl1 = fl1p.
+  Proof.
+    unfold fl1, fl1p.
+    rewrite map_map.
+    apply map_ptw_link.
+    intros l Hl.
+    destruct l as [[x u] [y v]].
+    assert (Hx : In x (map fst (nt_agents (ru_rhs r1)))).
+    { apply (proj1 (has_agent_In A (ru_rhs r1) x)).
+      exact (proj1 (wf_links Hr1 x y u v Hl)). }
+    assert (Hy : In y (map fst (nt_agents (ru_rhs r1)))).
+    { apply (proj1 (has_agent_In A (ru_rhs r1) y)).
+      exact (proj1 (proj2 (wf_links Hr1 x y u v Hl))). }
+    assert (Hcx : cm_pair_link ((fresh_id A N x, u), (fresh_id A N y, v))
+             = ((fresh_id A sc_N2 x, u), (fresh_id A sc_N2 y, v))).
+    { unfold cm_pair_link.
+      simpl.
+      assert (H1 : comm_map sc_M sc_M1 sc_M2 (fresh_id A N x) = fresh_id A sc_N2 x).
+      { apply cm_fresh1. exact Hx. }
+      assert (H2 : comm_map sc_M sc_M1 sc_M2 (fresh_id A N y) = fresh_id A sc_N2 y).
+      { apply cm_fresh1. exact Hy. }
+      rewrite H1, H2.
+      reflexivity. }
+    exact Hcx.
+  Qed.
+
+  (* A fresh id of [sc_N1] is strictly above [sc_M1]. *)
+  Local Lemma fresh_id_scN1_gt_scM1 (x : nat) : fresh_id A sc_N1 x > sc_M1.
+  Proof.
+    unfold fresh_id, sc_M1, max_agent_id. lia.
+  Qed.
+
+  (* A fresh id of [sc_N1] (relative to the [r2] RHS) is mapped by [comm_map]
+     to the corresponding fresh id of [N] (relative to the [r2] RHS). No
+     premise is needed: such ids are above [sc_M1] by construction. *)
+  Local Lemma cm_fresh2p (x : nat) :
+    comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 x) = fresh_id A N x.
+  Proof.
+    assert (Hgt : fresh_id A sc_N1 x > sc_M1). { exact (fresh_id_scN1_gt_scM1 x). }
+    assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 x)
+               = shift sc_M sc_M1 (fresh_id A sc_N1 x)).
+    { apply cm_r2. exact Hgt. }
+    rewrite Hcm.
+    unfold fresh_id, sc_M, sc_M1.
+    assert (Harg : max_agent_id A sc_N1 + 1 + x = x + max_agent_id A sc_N1 + 1). { lia. }
+    rewrite Harg.
+    change (shift sc_M sc_M1 (x + sc_M1 + 1) = max_agent_id A N + 1 + x).
+    rewrite (shift_r2 x).
+    unfold sc_M.
+    lia.
+  Qed.
+
+  (* [cm_pair_link] sends the [r2] fresh links (freshened rel. [sc_N1]) back
+     to the [r2] fresh links freshened rel. [N] (= [fl2]). *)
+  Local Lemma map_cm_fl2p : map cm_pair_link fl2p = fl2.
+  Proof.
+    unfold fl2p, fl2.
+    rewrite map_map.
+    apply map_ptw_link.
+    intros l Hl.
+    destruct l as [[x u] [y v]].
+    assert (Hcx : cm_pair_link ((fresh_id A sc_N1 x, u), (fresh_id A sc_N1 y, v))
+             = ((fresh_id A N x, u), (fresh_id A N y, v))).
+    { unfold cm_pair_link.
+      simpl.
+      assert (H1 : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 x) = fresh_id A N x).
+      { exact (cm_fresh2p x). }
+      assert (H2 : comm_map sc_M sc_M1 sc_M2 (fresh_id A sc_N1 y) = fresh_id A N y).
+      { exact (cm_fresh2p y). }
+      rewrite H1, H2.
+      reflexivity. }
+    exact Hcx.
+  Qed.
+
+  (* --- The crux: renaming commutes with the two rewirings on kept links --- *)
+
+  (* Endpoint-level versions of the four rewire maps. *)
+  Local Definition rw1e  (e : port_ref) : port_ref := rewire_endpoint A Ar N a b r1 e.
+  Local Definition rw2e  (e : port_ref) : port_ref := rewire_endpoint A Ar sc_N1 c d r2 e.
+  Local Definition rw1'e (e : port_ref) : port_ref := rewire_endpoint A Ar sc_N2 a b r1 e.
+  Local Definition rw2'e (e : port_ref) : port_ref := rewire_endpoint A Ar N c d r2 e.
+
+  (* [rewire_endpoint] is the identity off its two agents, for any net. *)
+  Local Lemma rewire_endpoint_fixed_net (M : Net A) (a1 a2 : nat) (r : Rule A) (x : nat) (p : nat)
+        (Hx1 : x <> a1) (Hx2 : x <> a2) :
+    rewire_endpoint A Ar M a1 a2 r (x, p) = (x, p).
+  Proof.
+    unfold rewire_endpoint.
+    destruct (Nat.eqb x a1) eqn:H1.
+    - exfalso. apply (proj1 (Nat.eqb_eq x a1)) in H1. apply Hx1. exact H1.
+    - destruct (Nat.eqb x a2) eqn:H2.
+      + exfalso. apply (proj1 (Nat.eqb_eq x a2)) in H2. apply Hx2. exact H2.
+      + reflexivity.
+  Qed.
+
+  (* The agent of an endpoint of a link of [N] is an agent of [N]. *)
+  Local Lemma kept_ep_agent (l : port_ref * port_ref) (Hln : In l (nt_links N)) (e : port_ref)
+        (He : link_end l e) :
+    has_agent A N (fst e).
+  Proof.
+    destruct l as [[lx lu] [ly lv]].
+    destruct e as [x p].
+    destruct He as [He1 | He2].
+    - injection He1 as Hlx Hlu. subst lx. subst lu.
+      exact (proj1 (wf_links Hwf x ly p lv Hln)).
+    - injection He2 as Hly Hlv. subst ly. subst lv.
+      exact (proj1 (proj2 (wf_links Hwf lx x lu p Hln))).
+  Qed.
+
+  (* The port of an endpoint of a link of [N] is bounded by the arity of the
+     label of its agent. *)
+  Local Lemma kept_ep_port (l : port_ref * port_ref) (Hln : In l (nt_links N)) (e : port_ref)
+        (He : link_end l e) (la : A) (Hla : agent_label A N (fst e) = Some la) :
+    snd e <= Ar la.
+  Proof.
+    destruct l as [[lx lu] [ly lv]].
+    destruct e as [x p].
+    destruct He as [He1 | He2].
+    - injection He1 as Hlx Hlu. subst lx. subst lu.
+      destruct (wf_links Hwf x ly p lv Hln) as [_ Hrest].
+      destruct Hrest as [Hly Hw].
+      destruct (agent_label A N ly) as [lb |] eqn:Hlbl.
+      + exact (proj1 (Hw la lb Hla (eq_refl (Some lb)))).
+      + exfalso. apply Hly. exact Hlbl.
+    - injection He2 as Hly Hlv. subst ly. subst lv.
+      destruct (wf_links Hwf lx x lu p Hln) as [Hlx Hrest].
+      destruct Hrest as [_ Hw].
+      destruct (agent_label A N lx) as [lb |] eqn:Hlbl.
+      + exact (proj2 (Hw lb la (eq_refl (Some lb)) Hla)).
+      + exfalso. apply Hlx. exact Hlbl.
+  Qed.
+
+  (* An agent of [N] other than [a b] survives in [sc_N1], hence is bounded
+     by [sc_M1]. *)
+  Local Lemma surv_scN1 (x : nat) (Hx : has_agent A N x) (Hxa : x <> a) (Hxb : x <> b) :
+    x <= sc_M1.
+  Proof.
+    apply (proj1 (has_agent_In A N x)) in Hx.
+    apply (proj1 (in_map_iff fst (nt_agents N) x)) in Hx.
+    destruct Hx as [q [Hqx Hqin]].
+    subst x.
+    assert (Hqf : In q (filter (fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) (nt_agents N))).
+    { apply (proj2 (filter_In (fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) q (nt_agents N))).
+      split.
+      - exact Hqin.
+      - assert (Hna : negb (Nat.eqb (fst q) a) = true).
+        { destruct (Nat.eqb (fst q) a) eqn:Hb.
+          + exfalso. apply (proj1 (Nat.eqb_eq (fst q) a)) in Hb. apply Hxa. exact Hb.
+          + reflexivity. }
+        assert (Hnb : negb (Nat.eqb (fst q) b) = true).
+        { destruct (Nat.eqb (fst q) b) eqn:Hb.
+          + exfalso. apply (proj1 (Nat.eqb_eq (fst q) b)) in Hb. apply Hxb. exact Hb.
+          + reflexivity. }
+        rewrite Hna, Hnb.
+        simpl.
+        reflexivity. }
+    assert (HxN1 : In (fst q) (map fst (nt_agents sc_N1))).
+    { change (In (fst q) (map fst (filter (fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) (nt_agents N)
+                                     ++ map (fun p : nat * A => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r1))))).
+      rewrite map_app.
+      apply in_or_app. left.
+      apply (proj2 (in_map_iff fst (filter (fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) (nt_agents N)) (fst q))).
+      exists q.
+      split.
+      - reflexivity.
+      - exact Hqf. }
+    specialize (list_max_upper_bound (map fst (nt_agents sc_N1)) (fst q) HxN1) as Hle.
+    unfold sc_M1, max_agent_id in Hle.
+    exact Hle.
+  Qed.
+
+  (* The crux, endpoint form: for a kept link [l] and one of its endpoints
+     [e], renaming the agent of [rw2 (rw1 e)] yields the agent of
+     [rw1' (rw2' e)], with the port unchanged on both sides. *)
+  Local Lemma crux_ep (l : port_ref * port_ref) (Hl : In l Lk) (e : port_ref) (He : link_end l e) :
+    (comm_map sc_M sc_M1 sc_M2 (fst (rw2e (rw1e e))), snd (rw2e (rw1e e))) = rw1'e (rw2'e e).
+  Proof.
+    destruct e as [x p].
+    (* Kept-link facts: [l] is a link of [N], not either fired main--main link. *)
+    apply (proj1 (filter_In (fun k : port_ref * port_ref =>
+           negb (is_main_main_link a b k) && negb (is_main_main_link c d k)) l (nt_links N))) in Hl.
+    destruct Hl as [Hln HPl].
+    apply (proj1 (andb_true_iff (negb (is_main_main_link a b l)) (negb (is_main_main_link c d l)))) in HPl.
+    destruct HPl as [Hmab Hmcd].
+    apply (proj1 (negb_true_iff (is_main_main_link a b l))) in Hmab.
+    apply (proj1 (negb_true_iff (is_main_main_link c d l))) in Hmcd.
+    (* Case split on the agent of the endpoint. *)
+    destruct (Nat.eqb x a) eqn:Hxa.
+    - (* x = a *)
+      apply (proj1 (Nat.eqb_eq x a)) in Hxa.
+      subst x.
+      destruct (Nat.eqb p 0) eqn:Hpz.
+      + (* p = 0: [l] touches (a, 0), hence [l] is the [a b] main--main link. *)
+        exfalso.
+        apply (proj1 (Nat.eqb_eq p 0)) in Hpz.
+        subst p.
+        destruct l as [[lx lu] [ly lv]].
+        destruct He as [He1 | He2].
+        * injection He1 as Hlx Hlu. subst lx. subst lu.
+          assert (Hhl : has_link A N (a, 0) (ly, lv)).
+          { left. exact Hln. }
+          assert (Heq : (b, 0) = (ly, lv)).
+          { exact (link_unique A Ar N Hwf (a, 0) (b, 0) (ly, lv) Hlink_ab Hhl). }
+          injection Heq as Hly Hlv. subst ly. subst lv.
+          simpl in Hmab.
+          assert (Haa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+          assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+          assert (Hab_f : Nat.eqb a b = false).
+          { destruct (Nat.eqb a b) eqn:Hb.
+            - exfalso. apply (proj1 (Nat.eqb_eq a b)) in Hb. apply Hab. exact Hb.
+            - reflexivity. }
+          assert (Hba_f : Nat.eqb b a = false).
+          { destruct (Nat.eqb b a) eqn:Hb.
+            - exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb. apply Hba. exact Hb.
+            - reflexivity. }
+          rewrite Haa, Hbb, Hab_f, Hba_f in Hmab.
+          simpl in Hmab.
+          discriminate Hmab.
+        * injection He2 as Hly Hlv. subst ly. subst lv.
+          assert (Hhl : has_link A N (a, 0) (lx, lu)).
+          { right. exact Hln. }
+          assert (Heq : (b, 0) = (lx, lu)).
+          { exact (link_unique A Ar N Hwf (a, 0) (b, 0) (lx, lu) Hlink_ab Hhl). }
+          injection Heq as Hlx Hlu. subst lx. subst lu.
+          simpl in Hmab.
+          assert (Haa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+          assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+          assert (Hab_f : Nat.eqb a b = false).
+          { destruct (Nat.eqb a b) eqn:Hb.
+            - exfalso. apply (proj1 (Nat.eqb_eq a b)) in Hb. apply Hab. exact Hb.
+            - reflexivity. }
+          assert (Hba_f : Nat.eqb b a = false).
+          { destruct (Nat.eqb b a) eqn:Hb.
+            - exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb. apply Hba. exact Hb.
+            - reflexivity. }
+          rewrite Haa, Hbb, Hab_f, Hba_f in Hmab.
+          simpl in Hmab.
+          discriminate Hmab.
+      + (* 1 <= p *)
+        assert (Hnz : p <> 0).
+        { intro Heq. rewrite Heq in Hpz. simpl in Hpz. discriminate Hpz. }
+        assert (H1 : (1 <=? p) = true).
+        { apply (proj2 (Nat.leb_le 1 p)). lia. }
+        destruct (Nat.leb p (Ar (fst (ru_lhs r1)))) eqn:H2.
+        * (* 1 <= p <= Ar (fst (ru_lhs r1)): in range. *)
+          set (ipr := nth (p - 1) (ru_iface r1) (0, 0)).
+          set (ia := fst ipr).
+          set (ipp := snd ipr).
+          assert (Hr1e : rw1e (a, p) = (fresh_id A N ia, ipp)).
+          { unfold rw1e, rewire_endpoint.
+            assert (Heqa : Nat.eqb a a = true).
+            { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+            rewrite Heqa, H1, H2.
+            simpl.
+            unfold freshen_pr.
+            reflexivity. }
+          assert (Hr2e : rw2e (fresh_id A N ia, ipp) = (fresh_id A N ia, ipp)).
+          { unfold rw2e.
+            apply rewire_endpoint_fixed_net.
+            - intro Heq.
+              assert (HcM : c <= sc_M). { exact (abcd_le_scM c Hc). }
+              rewrite <- Heq in HcM.
+              assert (Hgt : fresh_id A N ia > sc_M). { exact (fresh_id_gt_scM ia). }
+              lia.
+            - intro Heq.
+              assert (HdM : d <= sc_M). { exact (abcd_le_scM d Hd). }
+              rewrite <- Heq in HdM.
+              assert (Hgt : fresh_id A N ia > sc_M). { exact (fresh_id_gt_scM ia). }
+              lia. }
+          assert (Hr2'e : rw2'e (a, p) = (a, p)).
+          { unfold rw2'e.
+            apply rewire_endpoint_fixed.
+            - exact Hac.
+            - exact Had. }
+          assert (Hr1'e : rw1'e (a, p) = (fresh_id A sc_N2 ia, ipp)).
+          { unfold rw1'e, rewire_endpoint.
+            assert (Heqa : Nat.eqb a a = true).
+            { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+            rewrite Heqa, H1, H2.
+            simpl.
+            unfold freshen_pr.
+            reflexivity. }
+          assert (Hia : In ia (map fst (nt_agents (ru_rhs r1)))).
+          { assert (Hlen : p - 1 < length (ru_iface r1)).
+            { apply (proj1 (Nat.leb_le 1 p)) in H1.
+              apply (proj1 (Nat.leb_le p (Ar (fst (ru_lhs r1))))) in H2.
+              lia. }
+            assert (Hin : In ipr (ru_iface r1)).
+            { apply nth_In. exact Hlen. }
+            rewrite Hi1 in Hin.
+            assert (Hfree : is_free A Ar (ru_rhs r1) ipr).
+            { apply interface_free. exact Hr1. exact Hin. }
+            destruct Hfree as [la [Hal _]].
+            apply (proj2 (in_map_iff fst (nt_agents (ru_rhs r1)) (fst ipr))).
+            exists (fst ipr, la).
+            split.
+            - reflexivity.
+            - exact (agent_label_Some_In A (ru_rhs r1) (fst ipr) la Hal). }
+          assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A N ia) = fresh_id A sc_N2 ia).
+          { apply cm_fresh1. exact Hia. }
+          rewrite Hr1e.
+          rewrite Hr2e.
+          rewrite Hr2'e.
+          rewrite Hr1'e.
+          exact (f_equal (fun q : nat => (q, ipp)) Hcm).
+        * (* p > Ar (fst (ru_lhs r1)): contradicts the well-formedness bound. *)
+          exfalso.
+          assert (Hnot : ~ (p <= Ar (fst (ru_lhs r1)))).
+          { intro Hle.
+            assert (Ht : (p <=? Ar (fst (ru_lhs r1))) = true).
+            { apply (proj2 (Nat.leb_le p (Ar (fst (ru_lhs r1))))). exact Hle. }
+            assert (Hcontra : false = true).
+            { exact (eq_trans (eq_sym H2) Ht). }
+            discriminate Hcontra. }
+          assert (Hle : p <= Ar (fst (ru_lhs r1))).
+          { exact (kept_ep_port l Hln (a, p) He (fst (ru_lhs r1)) Hol1). }
+          apply Hnot. exact Hle.
+    - (* x <> a *)
+      destruct (Nat.eqb x b) eqn:Hxb.
+      + (* x = b *)
+        apply (proj1 (Nat.eqb_eq x b)) in Hxb.
+        subst x.
+        destruct (Nat.eqb p 0) eqn:Hpz.
+        * (* p = 0: [l] touches (b, 0), hence [l] is the [a b] main--main link. *)
+          exfalso.
+          apply (proj1 (Nat.eqb_eq p 0)) in Hpz.
+          subst p.
+          destruct l as [[lx lu] [ly lv]].
+          destruct He as [He1 | He2].
+          { injection He1 as Hlx Hlu. subst lx. subst lu.
+            assert (Hhl : has_link A N (b, 0) (ly, lv)).
+            { left. exact Hln. }
+            assert (Hhl0 : has_link A N (b, 0) (a, 0)).
+            { exact (proj1 (has_link_sym A N (a, 0) (b, 0)) Hlink_ab). }
+            assert (Heq : (a, 0) = (ly, lv)).
+            { exact (link_unique A Ar N Hwf (b, 0) (a, 0) (ly, lv) Hhl0 Hhl). }
+            injection Heq as Hly Hlv. subst ly. subst lv.
+            simpl in Hmab.
+            assert (Haa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+            assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+            assert (Hab_f : Nat.eqb a b = false).
+            { destruct (Nat.eqb a b) eqn:Hb.
+              - exfalso. apply (proj1 (Nat.eqb_eq a b)) in Hb. apply Hab. exact Hb.
+              - reflexivity. }
+            assert (Hba_f : Nat.eqb b a = false).
+            { destruct (Nat.eqb b a) eqn:Hb.
+              - exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb. apply Hba. exact Hb.
+              - reflexivity. }
+            rewrite Haa, Hbb, Hab_f, Hba_f in Hmab.
+            simpl in Hmab.
+            discriminate Hmab. }
+          { injection He2 as Hly Hlv. subst ly. subst lv.
+            assert (Hhl : has_link A N (b, 0) (lx, lu)).
+            { right. exact Hln. }
+            assert (Hhl0 : has_link A N (b, 0) (a, 0)).
+            { exact (proj1 (has_link_sym A N (a, 0) (b, 0)) Hlink_ab). }
+            assert (Heq : (a, 0) = (lx, lu)).
+            { exact (link_unique A Ar N Hwf (b, 0) (a, 0) (lx, lu) Hhl0 Hhl). }
+            injection Heq as Hlx Hlu. subst lx. subst lu.
+            simpl in Hmab.
+            assert (Haa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+            assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+            assert (Hab_f : Nat.eqb a b = false).
+            { destruct (Nat.eqb a b) eqn:Hb.
+              - exfalso. apply (proj1 (Nat.eqb_eq a b)) in Hb. apply Hab. exact Hb.
+              - reflexivity. }
+            assert (Hba_f : Nat.eqb b a = false).
+            { destruct (Nat.eqb b a) eqn:Hb.
+              - exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb. apply Hba. exact Hb.
+              - reflexivity. }
+            rewrite Haa, Hbb, Hab_f, Hba_f in Hmab.
+            simpl in Hmab.
+            discriminate Hmab. }
+        * (* 1 <= p *)
+          assert (Hnz : p <> 0).
+          { intro Heq. rewrite Heq in Hpz. simpl in Hpz. discriminate Hpz. }
+          assert (H1 : (1 <=? p) = true).
+          { apply (proj2 (Nat.leb_le 1 p)). lia. }
+          destruct (Nat.leb p (Ar (snd (ru_lhs r1)))) eqn:H2.
+          { (* 1 <= p <= Ar (snd (ru_lhs r1)): in range. *)
+            set (ipr := nth (Ar (fst (ru_lhs r1)) + (p - 1)) (ru_iface r1) (0, 0)).
+            set (ib := fst ipr).
+            set (ipp := snd ipr).
+            assert (Hr1e : rw1e (b, p) = (fresh_id A N ib, ipp)).
+            { unfold rw1e, rewire_endpoint.
+              assert (Heqb : Nat.eqb b b = true).
+              { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+              assert (Heqba : Nat.eqb b a = false).
+              { destruct (Nat.eqb b a) eqn:Hb.
+                + exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb. apply Hba. exact Hb.
+                + reflexivity. }
+              rewrite Heqb, Heqba, H1, H2.
+              simpl.
+              unfold freshen_pr.
+              reflexivity. }
+            assert (Hr2e : rw2e (fresh_id A N ib, ipp) = (fresh_id A N ib, ipp)).
+            { unfold rw2e.
+              apply rewire_endpoint_fixed_net.
+              - intro Heq.
+                assert (HcM : c <= sc_M). { exact (abcd_le_scM c Hc). }
+                rewrite <- Heq in HcM.
+                assert (Hgt : fresh_id A N ib > sc_M). { exact (fresh_id_gt_scM ib). }
+                lia.
+              - intro Heq.
+                assert (HdM : d <= sc_M). { exact (abcd_le_scM d Hd). }
+                rewrite <- Heq in HdM.
+                assert (Hgt : fresh_id A N ib > sc_M). { exact (fresh_id_gt_scM ib). }
+                lia. }
+            assert (Hr2'e : rw2'e (b, p) = (b, p)).
+            { unfold rw2'e.
+              apply rewire_endpoint_fixed.
+              - exact Hbc.
+              - exact Hbd. }
+            assert (Hr1'e : rw1'e (b, p) = (fresh_id A sc_N2 ib, ipp)).
+            { unfold rw1'e, rewire_endpoint.
+              assert (Heqb : Nat.eqb b b = true).
+              { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+              assert (Heqba : Nat.eqb b a = false).
+              { destruct (Nat.eqb b a) eqn:Hb.
+                + exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hb. apply Hba. exact Hb.
+                + reflexivity. }
+              rewrite Heqb, Heqba, H1, H2.
+              simpl.
+              unfold freshen_pr.
+              reflexivity. }
+            assert (Hib : In ib (map fst (nt_agents (ru_rhs r1)))).
+            { assert (Hlen : Ar (fst (ru_lhs r1)) + (p - 1) < length (ru_iface r1)).
+              { apply (proj1 (Nat.leb_le 1 p)) in H1.
+                apply (proj1 (Nat.leb_le p (Ar (snd (ru_lhs r1))))) in H2.
+                lia. }
+              assert (Hin : In ipr (ru_iface r1)).
+              { apply nth_In. exact Hlen. }
+              rewrite Hi1 in Hin.
+              assert (Hfree : is_free A Ar (ru_rhs r1) ipr).
+              { apply interface_free. exact Hr1. exact Hin. }
+              destruct Hfree as [la [Hal _]].
+              apply (proj2 (in_map_iff fst (nt_agents (ru_rhs r1)) (fst ipr))).
+              exists (fst ipr, la).
+              split.
+              - reflexivity.
+              - exact (agent_label_Some_In A (ru_rhs r1) (fst ipr) la Hal). }
+            assert (Hcm : comm_map sc_M sc_M1 sc_M2 (fresh_id A N ib) = fresh_id A sc_N2 ib).
+            { apply cm_fresh1. exact Hib. }
+            rewrite Hr1e.
+            rewrite Hr2e.
+            rewrite Hr2'e.
+            rewrite Hr1'e.
+            exact (f_equal (fun q : nat => (q, ipp)) Hcm). }
+          { (* p > Ar (snd (ru_lhs r1)): contradicts the well-formedness bound. *)
+            exfalso.
+            assert (Hnot : ~ (p <= Ar (snd (ru_lhs r1)))).
+            { intro Hle.
+              assert (Ht : (p <=? Ar (snd (ru_lhs r1))) = true).
+              { apply (proj2 (Nat.leb_le p (Ar (snd (ru_lhs r1))))). exact Hle. }
+              rewrite Ht in H2.
+              discriminate H2. }
+            assert (Hle : p <= Ar (snd (ru_lhs r1))).
+            { exact (kept_ep_port l Hln (b, p) He (snd (ru_lhs r1)) Hol2). }
+            apply Hnot. exact Hle. }
+      + (* x <> b *)
+        destruct (Nat.eqb x c) eqn:Hxc.
+        * (* x = c *)
+          apply (proj1 (Nat.eqb_eq x c)) in Hxc.
+          subst x.
+          destruct (Nat.eqb p 0) eqn:Hpz.
+          { (* p = 0: [l] touches (c, 0), hence [l] is the [c d] main--main link. *)
+            exfalso.
+            apply (proj1 (Nat.eqb_eq p 0)) in Hpz.
+            subst p.
+            destruct l as [[lx lu] [ly lv]].
+            destruct He as [He1 | He2].
+            { injection He1 as Hlx Hlu. subst lx. subst lu.
+              assert (Hhl : has_link A N (c, 0) (ly, lv)).
+              { left. exact Hln. }
+              assert (Heq : (d, 0) = (ly, lv)).
+              { exact (link_unique A Ar N Hwf (c, 0) (d, 0) (ly, lv) Hlink_cd Hhl). }
+              injection Heq as Hly Hlv. subst ly. subst lv.
+              simpl in Hmcd.
+              assert (Hcc : Nat.eqb c c = true). { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+              assert (Hdd : Nat.eqb d d = true). { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+              assert (Hcd_f : Nat.eqb c d = false).
+              { destruct (Nat.eqb c d) eqn:Hb.
+                - exfalso. apply (proj1 (Nat.eqb_eq c d)) in Hb. apply Hcd. exact Hb.
+                - reflexivity. }
+              assert (Hdc_f : Nat.eqb d c = false).
+              { destruct (Nat.eqb d c) eqn:Hb.
+                - exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb. apply Hdc. exact Hb.
+                - reflexivity. }
+              rewrite Hcc, Hdd, Hcd_f, Hdc_f in Hmcd.
+              simpl in Hmcd.
+              discriminate Hmcd. }
+            { injection He2 as Hly Hlv. subst ly. subst lv.
+              assert (Hhl : has_link A N (c, 0) (lx, lu)).
+              { right. exact Hln. }
+              assert (Heq : (d, 0) = (lx, lu)).
+              { exact (link_unique A Ar N Hwf (c, 0) (d, 0) (lx, lu) Hlink_cd Hhl). }
+              injection Heq as Hlx Hlu. subst lx. subst lu.
+              simpl in Hmcd.
+              assert (Hcc : Nat.eqb c c = true). { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+              assert (Hdd : Nat.eqb d d = true). { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+              assert (Hcd_f : Nat.eqb c d = false).
+              { destruct (Nat.eqb c d) eqn:Hb.
+                - exfalso. apply (proj1 (Nat.eqb_eq c d)) in Hb. apply Hcd. exact Hb.
+                - reflexivity. }
+              assert (Hdc_f : Nat.eqb d c = false).
+              { destruct (Nat.eqb d c) eqn:Hb.
+                - exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb. apply Hdc. exact Hb.
+                - reflexivity. }
+              rewrite Hcc, Hdd, Hcd_f, Hdc_f in Hmcd.
+              simpl in Hmcd.
+              discriminate Hmcd. } }
+          { (* 1 <= p *)
+            assert (Hnz : p <> 0).
+            { intro Heq. rewrite Heq in Hpz. simpl in Hpz. discriminate Hpz. }
+            assert (H1 : (1 <=? p) = true).
+            { apply (proj2 (Nat.leb_le 1 p)). lia. }
+            destruct (Nat.leb p (Ar (fst (ru_lhs r2)))) eqn:H2.
+            { (* 1 <= p <= Ar (fst (ru_lhs r2)): in range. *)
+              set (ipr := nth (p - 1) (ru_iface r2) (0, 0)).
+              set (ic := fst ipr).
+              set (ipc := snd ipr).
+              assert (Hr1e : rw1e (c, p) = (c, p)).
+              { unfold rw1e.
+                apply rewire_endpoint_fixed.
+                - exact Hca.
+                - exact Hcb. }
+              assert (Hr2e : rw2e (c, p) = (fresh_id A sc_N1 ic, ipc)).
+              { unfold rw2e, rewire_endpoint.
+                assert (Heqc : Nat.eqb c c = true).
+                { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+                rewrite Heqc, H1, H2.
+                simpl.
+                unfold freshen_pr.
+                reflexivity. }
+              assert (Hr2'e : rw2'e (c, p) = (fresh_id A N ic, ipc)).
+              { unfold rw2'e, rewire_endpoint.
+                assert (Heqc : Nat.eqb c c = true).
+                { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+                rewrite Heqc, H1, H2.
+                simpl.
+                unfold freshen_pr.
+                reflexivity. }
+              assert (Hr1'e : rw1'e (fresh_id A N ic, ipc) = (fresh_id A N ic, ipc)).
+              { unfold rw1'e.
+                apply rewire_endpoint_fixed_net.
+                - intro Heq.
+                  assert (HaM : a <= sc_M). { exact (abcd_le_scM a Ha). }
+                  rewrite <- Heq in HaM.
+                  assert (Hgt : fresh_id A N ic > sc_M). { exact (fresh_id_gt_scM ic). }
+                  lia.
+                - intro Heq.
+                  assert (HbM : b <= sc_M). { exact (abcd_le_scM b Hb). }
+                  rewrite <- Heq in HbM.
+                  assert (Hgt : fresh_id A N ic > sc_M). { exact (fresh_id_gt_scM ic). }
+                  lia. }
+              rewrite Hr1e.
+              rewrite Hr2e.
+              rewrite Hr2'e.
+              rewrite Hr1'e.
+              exact (f_equal (fun q : nat => (q, ipc)) (cm_fresh2p ic)). }
+            { (* p > Ar (fst (ru_lhs r2)): contradicts the well-formedness bound. *)
+              exfalso.
+              assert (Hnot : ~ (p <= Ar (fst (ru_lhs r2)))).
+              { intro Hle.
+                assert (Ht : (p <=? Ar (fst (ru_lhs r2))) = true).
+                { apply (proj2 (Nat.leb_le p (Ar (fst (ru_lhs r2))))). exact Hle. }
+                rewrite Ht in H2.
+                discriminate H2. }
+              assert (Hle : p <= Ar (fst (ru_lhs r2))).
+              { exact (kept_ep_port l Hln (c, p) He (fst (ru_lhs r2)) Hol3). }
+              apply Hnot. exact Hle. } }
+        * (* x <> c *)
+          destruct (Nat.eqb x d) eqn:Hxd.
+          { (* x = d *)
+            apply (proj1 (Nat.eqb_eq x d)) in Hxd.
+            subst x.
+            destruct (Nat.eqb p 0) eqn:Hpz.
+            { (* p = 0: [l] touches (d, 0), hence [l] is the [c d] main--main link. *)
+              exfalso.
+              apply (proj1 (Nat.eqb_eq p 0)) in Hpz.
+              subst p.
+              destruct l as [[lx lu] [ly lv]].
+              destruct He as [He1 | He2].
+              { injection He1 as Hlx Hlu. subst lx. subst lu.
+                assert (Hhl : has_link A N (d, 0) (ly, lv)).
+                { left. exact Hln. }
+                assert (Hhl0 : has_link A N (d, 0) (c, 0)).
+                { exact (proj1 (has_link_sym A N (c, 0) (d, 0)) Hlink_cd). }
+                assert (Heq : (c, 0) = (ly, lv)).
+                { exact (link_unique A Ar N Hwf (d, 0) (c, 0) (ly, lv) Hhl0 Hhl). }
+                injection Heq as Hly Hlv. subst ly. subst lv.
+                simpl in Hmcd.
+                assert (Hcc : Nat.eqb c c = true). { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+                assert (Hdd : Nat.eqb d d = true). { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+                assert (Hcd_f : Nat.eqb c d = false).
+                { destruct (Nat.eqb c d) eqn:Hb.
+                  - exfalso. apply (proj1 (Nat.eqb_eq c d)) in Hb. apply Hcd. exact Hb.
+                  - reflexivity. }
+                assert (Hdc_f : Nat.eqb d c = false).
+                { destruct (Nat.eqb d c) eqn:Hb.
+                  - exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb. apply Hdc. exact Hb.
+                  - reflexivity. }
+                rewrite Hcc, Hdd, Hcd_f, Hdc_f in Hmcd.
+                simpl in Hmcd.
+                discriminate Hmcd. }
+              { injection He2 as Hly Hlv. subst ly. subst lv.
+                assert (Hhl : has_link A N (d, 0) (lx, lu)).
+                { right. exact Hln. }
+                assert (Hhl0 : has_link A N (d, 0) (c, 0)).
+                { exact (proj1 (has_link_sym A N (c, 0) (d, 0)) Hlink_cd). }
+                assert (Heq : (c, 0) = (lx, lu)).
+                { exact (link_unique A Ar N Hwf (d, 0) (c, 0) (lx, lu) Hhl0 Hhl). }
+                injection Heq as Hlx Hlu. subst lx. subst lu.
+                simpl in Hmcd.
+                assert (Hcc : Nat.eqb c c = true). { apply (proj2 (Nat.eqb_eq c c)). reflexivity. }
+                assert (Hdd : Nat.eqb d d = true). { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+                assert (Hcd_f : Nat.eqb c d = false).
+                { destruct (Nat.eqb c d) eqn:Hb.
+                  - exfalso. apply (proj1 (Nat.eqb_eq c d)) in Hb. apply Hcd. exact Hb.
+                  - reflexivity. }
+                assert (Hdc_f : Nat.eqb d c = false).
+                { destruct (Nat.eqb d c) eqn:Hb.
+                  - exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb. apply Hdc. exact Hb.
+                  - reflexivity. }
+                rewrite Hcc, Hdd, Hcd_f, Hdc_f in Hmcd.
+                simpl in Hmcd.
+                discriminate Hmcd. } }
+            { (* 1 <= p *)
+              assert (Hnz : p <> 0).
+              { intro Heq. rewrite Heq in Hpz. simpl in Hpz. discriminate Hpz. }
+              assert (H1 : (1 <=? p) = true).
+              { apply (proj2 (Nat.leb_le 1 p)). lia. }
+              destruct (Nat.leb p (Ar (snd (ru_lhs r2)))) eqn:H2.
+              { (* 1 <= p <= Ar (snd (ru_lhs r2)): in range. *)
+                set (ipr := nth (Ar (fst (ru_lhs r2)) + (p - 1)) (ru_iface r2) (0, 0)).
+                set (id := fst ipr).
+                set (ipd := snd ipr).
+                assert (Hr1e : rw1e (d, p) = (d, p)).
+                { unfold rw1e.
+                  apply rewire_endpoint_fixed.
+                  - exact Hda.
+                  - exact Hdb. }
+                assert (Hr2e : rw2e (d, p) = (fresh_id A sc_N1 id, ipd)).
+                { unfold rw2e, rewire_endpoint.
+                  assert (Heqd : Nat.eqb d d = true).
+                  { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+                  assert (Heqdc : Nat.eqb d c = false).
+                  { destruct (Nat.eqb d c) eqn:Hb.
+                    + exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb. apply Hdc. exact Hb.
+                    + reflexivity. }
+                  rewrite Heqd, Heqdc, H1, H2.
+                  simpl.
+                  unfold freshen_pr.
+                  reflexivity. }
+                assert (Hr2'e : rw2'e (d, p) = (fresh_id A N id, ipd)).
+                { unfold rw2'e, rewire_endpoint.
+                  assert (Heqd : Nat.eqb d d = true).
+                  { apply (proj2 (Nat.eqb_eq d d)). reflexivity. }
+                  assert (Heqdc : Nat.eqb d c = false).
+                  { destruct (Nat.eqb d c) eqn:Hb.
+                    + exfalso. apply (proj1 (Nat.eqb_eq d c)) in Hb. apply Hdc. exact Hb.
+                    + reflexivity. }
+                  rewrite Heqd, Heqdc, H1, H2.
+                  simpl.
+                  unfold freshen_pr.
+                  reflexivity. }
+                assert (Hr1'e : rw1'e (fresh_id A N id, ipd) = (fresh_id A N id, ipd)).
+                { unfold rw1'e.
+                  apply rewire_endpoint_fixed_net.
+                  - intro Heq.
+                    assert (HaM : a <= sc_M). { exact (abcd_le_scM a Ha). }
+                    rewrite <- Heq in HaM.
+                    assert (Hgt : fresh_id A N id > sc_M). { exact (fresh_id_gt_scM id). }
+                    lia.
+                  - intro Heq.
+                    assert (HbM : b <= sc_M). { exact (abcd_le_scM b Hb). }
+                    rewrite <- Heq in HbM.
+                    assert (Hgt : fresh_id A N id > sc_M). { exact (fresh_id_gt_scM id). }
+                    lia. }
+                rewrite Hr1e.
+                rewrite Hr2e.
+                rewrite Hr2'e.
+                rewrite Hr1'e.
+                exact (f_equal (fun q : nat => (q, ipd)) (cm_fresh2p id)). }
+              { (* p > Ar (snd (ru_lhs r2)): contradicts the well-formedness bound. *)
+                exfalso.
+                assert (Hnot : ~ (p <= Ar (snd (ru_lhs r2)))).
+                { intro Hle.
+                  assert (Ht : (p <=? Ar (snd (ru_lhs r2))) = true).
+                  { apply (proj2 (Nat.leb_le p (Ar (snd (ru_lhs r2))))). exact Hle. }
+                  rewrite Ht in H2.
+                  discriminate H2. }
+                assert (Hle : p <= Ar (snd (ru_lhs r2))).
+                { exact (kept_ep_port l Hln (d, p) He (snd (ru_lhs r2)) Hol4). }
+                apply Hnot. exact Hle. } } }
+          { (* x is none of [a b c d]: all four rewirings fix the endpoint. *)
+            assert (Hne1 : x <> a).
+            { intro Heq.
+              assert (Ht : (x =? a) = true).
+              { apply (proj2 (Nat.eqb_eq x a)). exact Heq. }
+              rewrite Ht in Hxa.
+              discriminate Hxa. }
+            assert (Hne2 : x <> b).
+            { intro Heq.
+              assert (Ht : (x =? b) = true).
+              { apply (proj2 (Nat.eqb_eq x b)). exact Heq. }
+              rewrite Ht in Hxb.
+              discriminate Hxb. }
+            assert (Hne3 : x <> c).
+            { intro Heq.
+              assert (Ht : (x =? c) = true).
+              { apply (proj2 (Nat.eqb_eq x c)). exact Heq. }
+              rewrite Ht in Hxc.
+              discriminate Hxc. }
+            assert (Hne4 : x <> d).
+            { intro Heq.
+              assert (Ht : (x =? d) = true).
+              { apply (proj2 (Nat.eqb_eq x d)). exact Heq. }
+              rewrite Ht in Hxd.
+              discriminate Hxd. }
+            assert (Hr1e : rw1e (x, p) = (x, p)).
+            { unfold rw1e.
+              apply rewire_endpoint_fixed.
+              - exact Hne1.
+              - exact Hne2. }
+            assert (Hr2e : rw2e (x, p) = (x, p)).
+            { unfold rw2e.
+              apply rewire_endpoint_fixed_net.
+              - exact Hne3.
+              - exact Hne4. }
+            assert (Hr2'e : rw2'e (x, p) = (x, p)).
+            { unfold rw2'e.
+              apply rewire_endpoint_fixed.
+              - exact Hne3.
+              - exact Hne4. }
+            assert (Hr1'e : rw1'e (x, p) = (x, p)).
+            { unfold rw1'e.
+              apply rewire_endpoint_fixed_net.
+              - exact Hne1.
+              - exact Hne2. }
+            rewrite Hr1e.
+            rewrite Hr2e.
+            rewrite Hr2'e.
+            rewrite Hr1'e.
+            assert (HxM : x <= sc_M).
+            { apply abcd_le_scM. exact (kept_ep_agent l Hln (x, p) He). }
+            assert (HxM1 : x <= sc_M1).
+            { apply surv_scN1.
+              - exact (kept_ep_agent l Hln (x, p) He).
+              - exact Hne1.
+              - exact Hne2. }
+            assert (Hcm : comm_map sc_M sc_M1 sc_M2 x = x).
+            { apply cm_id. apply nat_le_min. exact HxM. exact HxM1. }
+            exact (f_equal (fun q : nat => (q, p)) Hcm). }
+  Qed.
+
+  (* The link-level crux: a kept link, rewired by [r1] then [r2] and renamed by
+     [comm_map], equals the same kept link rewired by [r2] then [r1]. This is
+     the endpoint crux ([crux_ep]) applied to both endpoints and paired. *)
+  Local Lemma sc_crux (l : port_ref * port_ref) (Hl : In l Lk) :
+    cm_pair_link (rw2 (rw1 l)) = rw1' (rw2' l).
+  Proof.
+    destruct l as [[x u] [y v]].
+    set (e1 := (x, u)).
+    set (e2 := (y, v)).
+    unfold cm_pair_link, rw1, rw2, rw1', rw2', rewire_link.
+    assert (H1 : (comm_map sc_M sc_M1 sc_M2 (fst (rw2e (rw1e e1))), snd (rw2e (rw1e e1))) = rw1'e (rw2'e e1)).
+    { apply (crux_ep ((x, u), (y, v)) Hl e1). left. reflexivity. }
+    assert (H2 : (comm_map sc_M sc_M1 sc_M2 (fst (rw2e (rw1e e2))), snd (rw2e (rw1e e2))) = rw1'e (rw2'e e2)).
+    { apply (crux_ep ((x, u), (y, v)) Hl e2). right. reflexivity. }
+    exact (eq_trans
+             (f_equal (fun q : port_ref => (q, (comm_map sc_M sc_M1 sc_M2 (fst (rw2e (rw1e e2))), snd (rw2e (rw1e e2))))) H1)
+             (f_equal (fun r : port_ref => (rw1'e (rw2'e e1), r)) H2)).
+  Qed.
+
+  (* The [ni_links] field: renaming the links of [sc_N12] by [comm_map] permutes
+     them into the links of [sc_N21]. The kept block is carried pointwise by the
+     crux; the two fresh blocks are swapped. *)
+  Local Lemma sc_ni_links :
+    Permutation (map cm_pair_link (nt_links sc_N12)) (nt_links sc_N21).
+  Proof.
+    rewrite sc_links_N12, sc_links_N21.
+    rewrite map_app.
+    rewrite map_app.
+    rewrite (map_map (fun l : port_ref * port_ref => rw2 (rw1 l)) cm_pair_link Lk).
+    rewrite map_cm_fl1.
+    rewrite map_cm_fl2p.
+    assert (Hcommon : map (fun l : port_ref * port_ref => cm_pair_link (rw2 (rw1 l))) Lk
+                     = map (fun l : port_ref * port_ref => rw1' (rw2' l)) Lk).
+    { apply map_ptw_link. intros l Hl. exact (sc_crux l Hl). }
+    rewrite Hcommon.
+    apply (Permutation_app_head (map (fun l : port_ref * port_ref => rw1' (rw2' l)) Lk)).
+    apply Permutation_app_comm.
+  Qed.
+
+  (* The commutation isomorphism: splicing [r2] over [sc_N1] and splicing [r1]
+     over [sc_N2] yield isomorphic nets, related by [comm_map]. *)
+  Definition step_commuting : net_iso A Ar sc_N12 sc_N21 :=
+    mkNetIso (comm_map sc_M sc_M1 sc_M2) sc_ni_agents sc_ni_inj sc_ni_links.
+
+  End Commutation.
