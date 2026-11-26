@@ -1,6 +1,6 @@
 ---
 name: reusing
-description: Use before creating any new code, definitions, lemmas, or documentation. Run this reuse checklist to find existing material to reuse or generalize instead of duplicating. Enforces the "one source of truth / no duplicates" principle.
+description: Use before creating any new code, definitions, lemmas, or documentation. Run this reuse checklist to find existing material to reuse or generalize instead of duplicating — including existing Rocq/Coq libraries (the ecosystem). Enforces the "one source of truth / no duplicates" principle.
 ---
 
 # Reusing
@@ -28,6 +28,32 @@ Run through these before creating new material:
       extraction harnesses to extend rather than duplicate.
 - [ ] **Docs** — check `docs/` and existing coqdoc comments for a section to
       update rather than add a new page.
+- [ ] **External libraries** — before defining foundational material
+      (arithmetic, orders, relations, containers, …), check whether an
+      existing Rocq/Coq library provides it (see "External libraries" below).
+
+## External libraries
+
+The checklist extends to the ecosystem: before defining foundational
+material, prefer an existing Rocq/Coq library over a local re-implementation
+(the "adopt existing libraries" principle in `AGENTS.md`).
+
+- **Search:** `opam search` (opam-coq-archive is the canonical registry for
+  Rocq/Coq packages), GitHub, the Rocq/Coq community.
+- **Evaluate:** compatibility with the pinned toolchain (Rocq 9.3, dune >=
+  3.24 — check the library's opam bounds and CI); maintenance status; license
+  compatibility (the project is MIT); fit (does it provide the
+  statements/abstractions the development needs?); weight (dependency size,
+  CI build time — Mathlib-class dependencies are heavy).
+- **Adopt:** add it as an opam dependency (bounds are floors — the
+  manual-opam decision in `docs/developer.md`); `Require Import` it in the
+  consuming module. External libraries sit below all project layers (like
+  Stdlib), so the layering rule is preserved.
+- **Record:** a non-trivial adoption (large/central library) is a design
+  decision — record it in `docs/design.md` under "Standing design decisions"
+  (per the `documentation` skill's mapping). If nothing fits, roll your own
+  minimally and record why existing libraries didn't fit (subtask plan /
+  commit message).
 
 ## Rules
 
