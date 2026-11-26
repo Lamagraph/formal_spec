@@ -6,9 +6,9 @@ in `src/` is the verification for a theorem.
 
 Two kinds of test, both run as part of the build (see `docs/developer.md`):
 
-- **QuickChick** — property-based (random) testing of Coq definitions. A
-  `QuickCheck` is a compile-time tactic, so a failing property fails `make`.
-  Requires `opam install coq-quickchick`.
+- **QuickChick** — property-based (random) testing of Rocq definitions. A
+  `QuickCheck` is a compile-time tactic, so a failing property fails
+  `dune build`. Requires `opam install coq-quickchick`.
 - **Extraction** — extract a definition to OCaml and run it against reference
   behavior / test vectors.
 

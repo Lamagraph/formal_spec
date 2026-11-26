@@ -17,9 +17,9 @@ type: Bug
 
 **Reproduction**
 
-<!-- The smallest module / command that reproduces it. `make` target, file, and
-     the failing theorem/definition if applicable. -->
+<!-- The smallest module / command that reproduces it. dune target/command,
+     file, and the failing theorem/definition if applicable. -->
 
 **Context**
 
-<!-- Coq version (`coqc --version`), branch, and any related task/issue. -->
+<!-- Rocq version (`rocq --version`), branch, and any related task/issue. -->

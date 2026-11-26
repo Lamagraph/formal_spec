@@ -16,11 +16,11 @@ labels: []
 
 **Verification**
 
-<!-- Confirm the quality gate passed: `make`, `make validate`, `make html`. -->
+<!-- Confirm the quality gate passed: `dune build`, rocqchk, `dune build @doc`. -->
 
-- [ ] `make` green (zero `Admitted`/`Admit`/`Abort`)
-- [ ] `make validate` (coqchk) clean
-- [ ] `make html` (coqdoc) clean
+- [ ] `dune build` green (zero `Admitted`/`Admit`/`Abort`)
+- [ ] `rocqchk` (independent re-check) clean
+- [ ] `dune build @doc` (rocqdoc) clean
 - [ ] Code review complete, zero findings
 
 **Design notes**

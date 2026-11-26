@@ -58,9 +58,16 @@ Rules of thumb:
 Record decisions here as they are made, so they survive the session that made
 them. Format: a short title, the decision, and the *why*.
 
-- **Coq 8.20.1, coq_makefile build.** Chosen for a proofs-centric spec: minimal
-  setup, standard for pure `.v` work. Revisit only if heavy OCaml extraction or
-  opam-library dependencies make `dune` clearly better.
+- **Rocq 9.3, dune build.** The prover is Rocq (the Coq project was renamed;
+  on opam `coq` is a compatibility metapackage over `rocq-core`/
+  `rocq-stdlib`), and the build is dune with the Rocq build language
+  (`(using rocq …)` in `dune-project`, `rocq.theory` stanzas per directory).
+  dune 3.24+ removed the old Coq build language, so a Coq 8.20.1 + dune
+  combination is no longer viable; dune also provides native docs
+  (`dune build @doc`), `.expected`-file testing, and IDE project files.
+  Sources use `From Stdlib` (`From Coq` is deprecated since Rocq 9.0), and
+  theory stanzas declare `(theories Stdlib)` because dune adds Corelib
+  implicitly but not Stdlib.
 - **Proofs are the tests.** We do not maintain a separate unit-test suite for
   theorems; a checked proof is the verification. QuickChick and extraction
   tests are used for *definitions* where random/empirical checking adds value

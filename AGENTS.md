@@ -1,7 +1,7 @@
 # AGENTS.md
 
-LamaGraph **formal_spec** is a Coq development (Coq 8.20.1, coq_makefile build,
-MIT) giving a formal specification of an **interaction-nets-based co-processor
+LamaGraph **formal_spec** is a Rocq development (Rocq 9.3, dune build, MIT)
+giving a formal specification of an **interaction-nets-based co-processor
 (accelerator) architecture**: the abstract interaction-net model, the concrete
 architecture, and the equivalence between them.
 
@@ -29,7 +29,7 @@ gate → merge, and points to the other workflow skills below.
   from code: design decisions, non-trivial constraints. Skills stay thin
   pointers to docs, code, or CI — they never re-describe them.
 * **A proof that compiles is the unit of verification.** A module that checks
-  under `coqc` has all its definitions and proofs verified. There is no
+  under `rocq` has all its definitions and proofs verified. There is no
   separate "test run" for a theorem. QuickChick and extraction tests apply to
   *definitions* where empirical checking adds value.
 * **Tools, not instructions.** If an existing tool does the job, run the tool.
@@ -58,8 +58,8 @@ Dependency direction is acyclic and points downward; `INet` never depends on
 |---|---|
 | `.opencode/skills/build` | Building the project (compile + check) and running QuickChick / extraction tests |
 | `.opencode/skills/add-theory` | Adding a new `.v` module to the specification |
-| `.opencode/skills/build-docs` | Rendering the coqdoc documentation |
-| `.opencode/skills/code-style` | Coq conventions before commit |
+| `.opencode/skills/build-docs` | Rendering the rocqdoc documentation |
+| `.opencode/skills/code-style` | Rocq conventions before commit |
 
 ### Workflow / process
 

@@ -1,7 +1,7 @@
 # LamaGraph — Formal Specification
 
-A formal specification, developed in **Coq**, of an **interaction-nets-based
-co-processor (accelerator) architecture**.
+A formal specification, developed in **Rocq** (the former Coq), of an
+**interaction-nets-based co-processor (accelerator) architecture**.
 
 The specification has two layers and the equivalence between them:
 
@@ -17,22 +17,22 @@ abstract interaction-net semantics.
 
 | Path | Purpose |
 |---|---|
-| `src/` | The Coq theories (`.v` files). See `docs/design.md` for the target layout. |
+| `src/` | The Rocq theories (`.v` files). See `docs/design.md` for the target layout. |
 | `docs/` | The *what/why*: `design.md` (architecture) and `developer.md` (build/verify). |
 | `tests/` | QuickChick / extraction tests for definitions. |
 | `tasks/` | Working plans: `global_plan.md` (multi-task) and `detailed_plan.md` (per task). |
 | `.opencode/skills/` | The *how*: procedural skills for the development workflow. |
-| `CoqProject`, `Makefile` | Build configuration (coq_makefile). |
+| `dune-project`, `src/dune`, `*.opam` | Build configuration (dune + opam). |
 
 ## Quick start
 
 ```sh
-make            # build (compile + check all proofs)
-make validate   # independent re-check with coqchk
-make html       # render docs with coqdoc -> html/
+dune build        # build (compile + check all proofs)
+dune build @doc   # render docs with rocqdoc
 ```
 
-Prerequisites and the full command reference live in [`docs/developer.md`](docs/developer.md).
+The full quality gate (build + independent `rocqchk` re-check + docs) and the
+prerequisites live in [`docs/developer.md`](docs/developer.md).
 
 ## Working in this repo
 
