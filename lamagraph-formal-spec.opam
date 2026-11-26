@@ -4,7 +4,7 @@ name: "lamagraph-formal-spec"
 version: "dev"
 synopsis: "Formal specification of an interaction-nets-based co-processor architecture"
 description: """
-Coq/Rocq formal specification of an interaction-nets-based co-processor
+Rocq formal specification of an interaction-nets-based co-processor
 (accelerator) architecture: the abstract interaction-net model, the concrete
 architecture, and the equivalence between them."""
 license: "MIT"
