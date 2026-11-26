@@ -1,0 +1,6 @@
+(rocq.theory
+ (name LamaGraph)
+ (package lamagraph-formal-spec)
+ (synopsis "Formal specification of an interaction-nets-based co-processor architecture")
+ (theories Stdlib)
+ (generate_project_file))

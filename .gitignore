@@ -34,6 +34,11 @@ nlia.cache
 nra.cache
 native_compute_profile_*.data
 
+# dune build tree and IDE/project artifacts
+_build/
+.merlin
+_RocqProject
+
 # coqdoc output
 html/
 all.pdf

@@ -1,0 +1,22 @@
+opam-version: "2.0"
+maintainer: "gsv"
+name: "lamagraph-formal-spec"
+version: "dev"
+synopsis: "Formal specification of an interaction-nets-based co-processor architecture"
+description: """
+Coq/Rocq formal specification of an interaction-nets-based co-processor
+(accelerator) architecture: the abstract interaction-net model, the concrete
+architecture, and the equivalence between them."""
+license: "MIT"
+depends: [
+  "dune" {>= "3.24"}
+  "rocq-core" {>= "9.0"}
+  "rocq-stdlib" {>= "9.0"}
+  "odoc"
+]
+build: [
+  ["dune" "build" "-j%{jobs}%"]
+]
+install: [
+  ["dune" "install"]
+]
