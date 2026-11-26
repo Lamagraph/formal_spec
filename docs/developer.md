@@ -61,6 +61,24 @@ rocqdoc renders the `{** ... *}` comments in the `.v` sources. Comments are
 the documentation: write them in the source, not in a separate file. The HTML
 lands in `_build/` (git-ignored build output).
 
+## Documentation website
+
+The documentation site is at
+<https://lamagraph.github.io/formal_spec/>. It serves the start page
+(`site/index.html`, the only hand-written page) and the rocqdoc output
+extracted from the `.v` sources (under `/doc/`).
+
+`.github/workflows/deploy-docs.yml` is the source of truth for the deployment
+setup; this section covers the decisions and day-to-day use.
+
+- **Trigger:** push to `main` — the site reflects the *released* spec, so it
+  updates at each release. `workflow_dispatch` allows manual runs, but only
+  once the workflow is on the default branch (the dispatch API resolves
+  workflows from `main` only).
+- **Local preview:** `dune build @doc`, then open
+  `_build/default/src/LamaGraph.html/index.html`. On the site, the start page
+  sits at the root and the rocqdoc output under `/doc/`.
+
 ## Property-based testing (QuickChick)
 
 For definitions (not theorems) where you want random counterexample hunting

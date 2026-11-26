@@ -31,6 +31,9 @@ guidelines" section of `docs/developer.md`; this skill is the procedure.
 
 6. Verify: the tag points at the merged commit, and the GitHub Release (created
    from the tag) carries the `[X.Y.Z]` changelog section.
+7. The push to `main` triggers the documentation site deployment
+   (`.github/workflows/deploy-docs.yml`); confirm the run is green — the site
+   (https://lamagraph.github.io/formal_spec/) now reflects the release.
 
 ## Versioning
 

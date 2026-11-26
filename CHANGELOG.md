@@ -10,6 +10,10 @@ follow the scheme in the `release` skill.
 - Initial repository setup: Coq (coq_makefile) build, `src/Basics.v` starter,
   `docs/` (design + developer guides), the `AGENTS.md` entrypoint, and the
   `.opencode/skills/` workflow.
+- Documentation website at https://lamagraph.github.io/formal_spec/: the
+  rocqdoc output extracted from the `.v` sources plus one start page,
+  deployed from `main` at each release
+  (`.github/workflows/deploy-docs.yml`).
 
 ### Changed
 - Build system migrated from coq_makefile to **dune + opam** (`dune-project`,
