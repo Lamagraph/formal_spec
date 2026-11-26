@@ -1,0 +1,5 @@
+(rocq.theory
+ (name LamaGraph.INet)
+ (package lamagraph-formal-spec)
+ (synopsis "The interaction-net model (abstract computational semantics)")
+ (theories LamaGraph))
