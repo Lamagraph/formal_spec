@@ -23,6 +23,10 @@ gate → merge, and points to the other workflow skills below.
   PR descriptions, and docs — is described exactly once. Use generalization,
   cross-references, and links to avoid duplication. Find what you can to reuse
   before creating something new.
+* **Adopt existing libraries, don't reinvent them.** Before defining
+  foundational material, search for an existing Rocq/Coq library (opam,
+  GitHub) and adopt it; only roll your own if nothing fits, and record the
+  decision (see the `reusing` skill).
 * **Source-of-truth hierarchy: code (`.v`), scripts, CI configs > docs.** If a
   fact can be extracted from the sources, scripts, or CI configs, it is not
   duplicated in docs. Docs hold only what cannot be unambiguously reconstructed
