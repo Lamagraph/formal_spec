@@ -40,7 +40,10 @@ dune discovers `.v` files automatically — there is no manifest to update.
 Each new module must:
 
 1. Open with a `{** ... *}` header comment stating the module's **single
-   responsibility** and its place in the `docs/design.md` layout.
+   responsibility**, its place in the `docs/design.md` layout, **and the
+   module's architecture-related design decisions** — so the rendered
+   (rocqdoc) documentation is self-contained (the `documentation` skill
+   defines the standard).
 2. `Require Import` only what it uses, and only from **lower** layers (respect
    the dependency direction — `INet` never depends on `Arch`, `Basics` depends
    on neither).

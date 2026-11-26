@@ -12,7 +12,9 @@ per `docs/developer.md`).
 
 ## Conventions
 
-- **Naming.**
+- **Naming.** Names are the spec's vocabulary — the code *is* the
+  specification, so a name must read as spec prose in the rendered (rocqdoc)
+  output, not just be a short internal label.
   - Modules: `CamelCase`, one word per concept (`Net`, `Schedule`).
   - Definitions/records/theorems: `snake_case`, named for their contract
     (`rewrite_step`, `agent_is_well_formed`), not for the proof that produced

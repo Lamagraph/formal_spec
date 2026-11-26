@@ -18,10 +18,16 @@ source of truth for what docs to update when source changes.
 | Changed public definition/theorem | Update its coqdoc comment (statement, invariants, example) |
 | New module | Add a module-header comment block stating the module's single responsibility and its place in the `docs/design.md` layout |
 | Removed/renamed API | Update every coqdoc comment and `docs/` page that references it |
-| New standing design decision | Record it in `docs/design.md` under "Standing design decisions" |
-| Architecture change | Update the target layout in `docs/design.md` |
+| New architecture-related design decision | Document it in the `.v` file where it is realized (module header / above the relevant definition); do not duplicate it in `docs/design.md` |
+| New non-architecture (build/process) design decision | Record it in `docs/design.md` under "Standing design decisions" |
+| Architecture change | Update the target layout in `docs/design.md` and the affected `.v` module headers |
 
 ## Comment conventions
+
+The rendered (rocqdoc) form of the code *is* the specification's
+documentation — there is no separate spec document. Comments must therefore
+be descriptive enough that a reader grasps the *what* and *why* of each
+public item from the rendered output alone (self-contained, human-readable).
 
 - Use `{** ... *}` blocks (rendered by coqdoc) for documentation; use `(* ... *)`
   for private proof scratch that should not be rendered.
