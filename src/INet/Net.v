@@ -15,6 +15,7 @@ Require Import Stdlib.Arith.PeanoNat.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Lists.Finite.
+Require Import Stdlib.Logic.Classical.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Sorting.Mergesort.
 Require Import Stdlib.Sorting.Permutation.
@@ -654,4 +655,78 @@ Proof.
   unfold interface.
   apply (Sorted_rel_change _ (fun x y => PortRefOrder.leb x y = true) port_ref_le _ port_ref_leb_spec).
   apply PortRefSort.Sorted_sort.
+Qed.
+
+(**************************************************************************)
+(** ** Active pairs *)
+
+(** An [active pair] is a pair of distinct agents joined by a link between
+    their main ports (port [0]). It is the reducible unit of an interaction
+    net: a reduction step fires on exactly one active pair. [Ar] is carried
+    for signature uniformity with the other net predicates ([well_formed],
+    [is_free], [interface]); [is_active_pair] itself does not consult it. *)
+Definition is_active_pair (A : Type) (Ar : A -> nat) (N : Net A) (a b : nat) : Prop :=
+  a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0).
+
+(** In a well-formed net, a port is the end of at most one link: if [pr1] is
+    linked to [pr2] and to [pr3], then [pr2 = pr3]. This restates the
+    port-injectivity condition [wf_ports] for linked ports and is the key fact
+    behind the disjointness of active pairs. *)
+Lemma link_unique (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (pr1 pr2 pr3 : port_ref) :
+  has_link A N pr1 pr2 -> has_link A N pr1 pr3 -> pr2 = pr3.
+Proof.
+  intros H12 H13.
+  (* H12 : In (pr1,pr2) \/ In (pr2,pr1); H13 : In (pr1,pr3) \/ In (pr3,pr1).
+     In each case pr1 is an end of two links, l1 and l2. Either l1 = l2, in
+     which case the equality of the pairs yields the result, or l1 <> l2, in
+     which case wf_ports (port-injectivity) contradicts both ending at pr1. *)
+  destruct H12 as [H12|H12]; destruct H13 as [H13|H13].
+  - (* l1 = (pr1,pr2) [pr1 = fst], l2 = (pr1,pr3) [pr1 = fst] *)
+    destruct (classic ((pr1, pr2) = (pr1, pr3))) as [Heq|Hneq].
+    + injection Heq as H23. exact H23.
+    + exfalso.
+      apply (wf_ports H pr1 (pr1, pr2) (pr1, pr3) H12 H13 Hneq).
+      split; [left; reflexivity | left; reflexivity].
+  - (* l1 = (pr1,pr2) [pr1 = fst], l2 = (pr3,pr1) [pr1 = snd] *)
+    destruct (classic ((pr1, pr2) = (pr3, pr1))) as [Heq|Hneq].
+    + injection Heq as Hf Hs. subst pr3. exact Hs.
+    + exfalso.
+      apply (wf_ports H pr1 (pr1, pr2) (pr3, pr1) H12 H13 Hneq).
+      split; [left; reflexivity | right; reflexivity].
+  - (* l1 = (pr2,pr1) [pr1 = snd], l2 = (pr1,pr3) [pr1 = fst] *)
+    destruct (classic ((pr2, pr1) = (pr1, pr3))) as [Heq|Hneq].
+    + injection Heq as Hf Hs. subst pr2. exact Hs.
+    + exfalso.
+      apply (wf_ports H pr1 (pr2, pr1) (pr1, pr3) H12 H13 Hneq).
+      split; [right; reflexivity | left; reflexivity].
+  - (* l1 = (pr2,pr1) [pr1 = snd], l2 = (pr3,pr1) [pr1 = snd] *)
+    destruct (classic ((pr2, pr1) = (pr3, pr1))) as [Heq|Hneq].
+    + injection Heq as H23. exact H23.
+    + exfalso.
+      apply (wf_ports H pr1 (pr2, pr1) (pr3, pr1) H12 H13 Hneq).
+      split; [right; reflexivity | right; reflexivity].
+Qed.
+
+(** Two active pairs in a well-formed net that share an agent are the same
+    pair: if [a = c] then [b = d]. Consequently, DISTINCT active pairs share
+    no agents at all — they are disjoint. This disjointness is the key
+    ingredient of the strong-confluence proof: reducing one active pair leaves
+    every other active pair intact, so two reductions at disjoint pairs
+    commute. *)
+Lemma pair_disjoint (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (a b c d : nat)
+      (Hab : is_active_pair A Ar N a b)
+      (Hcd : is_active_pair A Ar N c d) :
+  a = c -> b = d.
+Proof.
+  intros Hac.
+  unfold is_active_pair in Hab, Hcd.
+  destruct Hab as [Haneq Hrest]. destruct Hrest as [Haa Hrest2].
+  destruct Hrest2 as [Hba Hablink].
+  destruct Hcd as [Hcneq Hcrest]. destruct Hcrest as [Hca Hcrest2].
+  destruct Hcrest2 as [Hda Hcdlink].
+  subst c.
+  (* Hablink : has_link (a,0) (b,0); Hcdlink : has_link (a,0) (d,0). *)
+  exact (f_equal fst (link_unique A Ar N H (a, 0) (b, 0) (d, 0) Hablink Hcdlink)).
 Qed.
