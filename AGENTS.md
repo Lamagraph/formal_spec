@@ -32,6 +32,15 @@ gate → merge, and points to the other workflow skills below.
   under `rocq` has all its definitions and proofs verified. There is no
   separate "test run" for a theorem. QuickChick and extraction tests apply to
   *definitions* where empirical checking adds value.
+* **The Coq code is the specification.** The `.v` sources *are* the spec — not
+  an implementation of an external document. No md or other file may carry
+  specification content; `md` files are for development documentation only.
+  Architecture-related design decisions are documented in the `.v` files
+  (module headers / above the relevant definitions) so the rocqdoc-rendered
+  code is **self-contained** and human-readable on its own — naming
+  expressive, comments descriptive enough to stand without external
+  explanation (see the `code-style`, `documentation`, and `add-theory`
+  skills).
 * **Tools, not instructions.** If an existing tool does the job, run the tool.
   No long manual procedures for regular tasks. If a regular task has no tool,
   the tool must be installed and configured appropriately.
