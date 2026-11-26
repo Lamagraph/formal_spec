@@ -1,9 +1,11 @@
 # The quality gate, as run in CI. This file is the source of truth for what
 # the gate runs remotely (see the `quality-gates` skill and docs/developer.md).
 #
-# NOTE (iteration 1): Coq is installed from source via opam, which is correct
-# but slow. Add an opam-switch cache (keyed on the Coq version) to speed up
-# subsequent runs once the workflow is stable.
+# The build runs inside the prebuilt `rocq/rocq-prover:9.3` image (via
+# docker-coq-action), so the prover is never compiled from source. The
+# action pins the local opam package and installs its dependencies
+# (already present in the image, so this is a fast no-op that guarantees
+# dune/rocq/odoc are available).
 name: CI
 
 on:
@@ -18,23 +20,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Coq 8.20.1
-        run: |
-          eval $(opam env)
-          opam init --disable-sandboxing -y
-          opam install coq.8.20.1 -y
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          opam_file: 'lamagraph-formal-spec.opam'
+          custom_image: 'rocq/rocq-prover:9.3'
+          before_script: |
+            startGroup "Workaround permission issue"
+              sudo chown -R 1000:1000 .
+            endGroup
+          script: |
+            startGroup "Build (rocq — every proof checks)"
+              dune build
+            endGroup
+            startGroup "Validate (rocqchk — independent re-check)"
+              MODS=$(cd _build/default/src && find . -name '*.vo' | sed 's|^\./||; s|\.vo$||; s|/|.|g' | sed 's|^|LamaGraph.|' | tr '\n' ' ')
+              rocqchk -R _build/default/src LamaGraph $MODS
+            endGroup
+            startGroup "Docs (rocqdoc)"
+              dune build @doc
+            endGroup
 
-      - name: Build (coqc — every proof checks)
-        run: |
-          eval $(opam env)
-          make
-
-      - name: Validate (coqchk — independent re-check)
-        run: |
-          eval $(opam env)
-          make validate
-
-      - name: Docs (coqdoc)
-        run: |
-          eval $(opam env)
-          make html
+      - name: Revert permissions
+        # to avoid a warning at cleanup time
+        if: ${{ always() }}
+        run: sudo chown -R 1001:116 .
