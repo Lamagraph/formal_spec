@@ -1,6 +1,6 @@
 ---
 name: quality-gates
-description: Use before merging a task to dev. Defines the hard gate that must pass (build + coqchk + coqdoc) and how to interpret its result. References docs/developer.md for the exact commands.
+description: Use before merging a task to dev. Defines the hard gate that must pass (build + rocqchk + rocqdoc) and how to interpret its result. References docs/developer.md for the exact commands.
 ---
 
 # Quality Gates
@@ -14,20 +14,22 @@ The gate is the combination of the build, the independent re-check, and the
 docs build. The exact commands live in `docs/developer.md`; this skill defines
 only the gate semantics.
 
-- **Build** — `make`. Every `.v` in `CoqProject` must compile under `coqc` with
+- **Build** — `dune build`. Every `.v` must compile under `rocq` with
   **zero** `Admitted`/`Admit`/`Abort`. This is the core check: a proof that
   compiles is verified.
-- **Independent re-check** — `make validate` (coqchk). Must report no errors.
-- **Docs build** — `make html` (coqdoc). Must exit 0.
+- **Independent re-check** — `rocqchk` over the dune build tree. Must report
+  no errors.
+- **Docs build** — `dune build @doc` (rocqdoc). Must exit 0.
 
-The CI workflow (`.github/workflows/ci.yml`) is the source of truth for what the
-gate runs in CI; this skill only defines the gate semantics.
+The CI workflow (`.github/workflows/ci.yml`) is the source of truth for what
+the gate runs in CI; this skill only defines the gate semantics.
 
 ## Procedure
 
-1. Run `make`. It must succeed with zero `Admitted`/`Admit`/`Abort`.
-2. Run `make validate`. It must report no errors.
-3. Run `make html`. It must exit 0.
+1. Run `dune build`. It must succeed with zero `Admitted`/`Admit`/`Abort`.
+2. Run the `rocqchk` re-check (command in `docs/developer.md`). It must report
+   no errors.
+3. Run `dune build @doc`. It must exit 0.
 4. Interpret the result:
    - All clean → **PASS**. Proceed to merge (see `git-workflow`).
    - Any failure → **BLOCKED**.

@@ -38,7 +38,8 @@ records, theorems, tactics).
 ### 2. Prove / Test
 
 Complete the proofs and add the QuickChick / extraction tests specified in the
-subtask's **Tests** section. **The gate for this step is `make` succeeding** —
+subtask's **Tests** section. **The gate for this step is `dune build`
+succeeding** —
 every proof in the touched modules checks, and any `QuickCheck` runs pass. See
 the `build` skill. No `Admitted`, `Admit`, or `Abort` may remain.
 
@@ -119,7 +120,7 @@ Example for subtask S1:
 
 ```
 - "S1: Implement" -> in_progress -> completed
-- "S1: Prove / Test (make green)" -> in_progress -> completed
+- "S1: Prove / Test (dune build green)" -> in_progress -> completed
 - "S1: Update documentation" -> in_progress -> completed
 - "S1: Pre-Commit Check (code-style)" -> in_progress -> completed
 - "S1: Quality checks" -> in_progress -> completed
@@ -180,7 +181,7 @@ task's own issue) and is merged to `dev` — verify:
       committed Coq.
 - [ ] No subtask was reverted without resolution.
 - [ ] No requirement was silently skipped or deferred.
-- [ ] `make` succeeds with **zero** `Admitted`/`Admit`/`Abort` anywhere.
+- [ ] `dune build` succeeds with **zero** `Admitted`/`Admit`/`Abort` anywhere.
 - [ ] All quality gates pass (see the `quality-gates` skill).
 - [ ] The plan comment on the task issue is in sync with
       `tasks/detailed_plan.md` (pure mirror — `python3

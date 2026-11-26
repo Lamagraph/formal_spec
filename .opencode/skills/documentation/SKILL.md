@@ -40,6 +40,6 @@ A documentation update is complete when:
       the change.
 - [ ] Every new public definition/theorem has a comment stating its contract.
 - [ ] Any new standing decision is recorded in `docs/design.md`.
-- [ ] `make html` succeeds (coqdoc renders without error).
+- [ ] `dune build @doc` succeeds (rocqdoc renders without error).
 
 To build and check the docs, see the `build-docs` skill.

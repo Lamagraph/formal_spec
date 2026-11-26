@@ -37,7 +37,7 @@ subtask:
 
 - Is small enough to complete in a single focused work session (typically
   30–90 minutes).
-- Produces a **compilable increment** — after it, `make` succeeds and no
+- Produces a **compilable increment** — after it, `dune build` succeeds and no
   partial/`Admitted`/`Abort`ed proof is left uncommitted.
 - Has a unique identifier (e.g., "S1", "S2") used in commit messages and plan
   tracking.

@@ -35,12 +35,13 @@ section of `docs/developer.md`.
 
 ### Pre-commit checklist
 
-1. Run the commit gate: `code-style` conventions, `make` (build), and
-   `make validate` (coqchk).
+1. Run the commit gate: `code-style` conventions, `dune build` (build), and
+   the `rocqchk` re-check.
 
 ### Commit scope
 
-- Each commit is a self-contained, compilable increment (`make` succeeds).
+- Each commit is a self-contained, compilable increment (`dune build`
+  succeeds).
 - Commit messages must be detailed enough to understand why changes were
   required.
 

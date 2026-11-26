@@ -21,7 +21,8 @@ task, load this skill first; it points to the skills that handle each step.
   decision was made.
 - Commit messages must be detailed enough to understand the reasons for
   changes.
-- A subtask is a **compilable increment**: after it, `make` succeeds (every
+- A subtask is a **compilable increment**: after it, `dune build` succeeds
+  (every
   proof in the touched modules checks). There is no separate test run for a
   theorem — a checked proof is the verification.
 

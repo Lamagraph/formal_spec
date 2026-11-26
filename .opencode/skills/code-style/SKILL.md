@@ -1,14 +1,14 @@
 ---
 name: code-style
-description: Use before committing to check Coq conventions. There is no standard Coq formatter; this skill defines the conventions the project enforces by review. Thin pointer to docs/developer.md for the build that must stay green.
+description: Use before committing to check Rocq conventions. There is no standard Rocq formatter; this skill defines the conventions the project enforces by review. Thin pointer to docs/developer.md for the build that must stay green.
 ---
 
 # Code style
 
 Coq has no canonical auto-formatter the way Python has `ruff`/`black`. Style is
 enforced by **review** (see the `code-review` skill) against the conventions
-below, plus the hard requirement that the build stays green (`make`, per
-`docs/developer.md`).
+below, plus the hard requirement that the build stays green (`dune build`,
+per `docs/developer.md`).
 
 ## Conventions
 
@@ -33,5 +33,6 @@ below, plus the hard requirement that the build stays green (`make`, per
 
 ## Pre-commit
 
-Run `make` (and `make validate` for the commit gate, per `git-workflow`). The
-build must be green. There is no separate lint/format command to run.
+Run `dune build` (and the `rocqchk` re-check for the commit gate, per
+`git-workflow`). The build must be green. There is no separate lint/format
+command to run.
