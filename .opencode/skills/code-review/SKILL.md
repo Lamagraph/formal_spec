@@ -20,12 +20,12 @@ the entire repo's diff for the task and iterate until there are zero findings.
 ## Checklist
 
 - [ ] **Correctness** — every clause of the task issue (#N) is traceable to
-      committed, checked Coq. No `Admitted`/`Admit`/`Abort`.
+      committed, checked Rocq. No `Admitted`/`Admit`/`Abort`.
 - [ ] **Statements** — theorem/definition statements are as general as the task
       requires and no weaker than needed; no accidentally-overstrong hypotheses.
 - [ ] **Proofs** — proofs are complete and not weakened; no goal discharged by
       `admit`/`exact I` on a wrong term.
-- [ ] **Docs** — coqdoc comments updated per the `documentation` skill; each
+- [ ] **Docs** — rocqdoc comments updated per the `documentation` skill; each
       public item states its contract.
 - [ ] **Duplication** — no copy-pasted or near-identical lemmas/encodings (see
       `reusing`).

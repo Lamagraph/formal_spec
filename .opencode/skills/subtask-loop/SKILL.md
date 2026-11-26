@@ -32,7 +32,7 @@ a single commit.
 
 ### 1. Implement
 
-Write the Coq specified in the subtask's **Code** section (definitions,
+Write the Rocq specified in the subtask's **Code** section (definitions,
 records, theorems, tactics).
 
 ### 2. Prove / Test
@@ -46,17 +46,17 @@ the `build` skill. No `Admitted`, `Admit`, or `Abort` may remain.
 ### 3. Update Documentation
 
 **Load the `documentation` skill before updating any docs.** Update all
-task-related coqdoc comments per that skill.
+task-related rocqdoc comments per that skill.
 
 **Hard gate — this step is not complete until:**
 
-- [ ] At least one coqdoc comment was created or updated for this subtask
+- [ ] At least one rocqdoc comment was created or updated for this subtask
 - [ ] Documentation completeness is verified per the `documentation` skill's
       procedure
 
 ### 4. Pre-Commit Check
 
-Run the Coq conventions check per the `code-style` skill. Do not commit until
+Run the Rocq conventions check per the `code-style` skill. Do not commit until
 it passes.
 
 ### 5. Quality Checks
@@ -178,7 +178,7 @@ task is considered done — its last subtask's commit carries `Closes #<N>` (the
 task's own issue) and is merged to `dev` — verify:
 
 - [ ] Every clause in the task description is traceable to implemented and
-      committed Coq.
+      committed Rocq.
 - [ ] No subtask was reverted without resolution.
 - [ ] No requirement was silently skipped or deferred.
 - [ ] `dune build` succeeds with **zero** `Admitted`/`Admit`/`Abort` anywhere.

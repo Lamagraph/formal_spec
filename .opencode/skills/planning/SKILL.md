@@ -64,7 +64,7 @@ be executed.**
 **Code:** <.v files to create or modify, definitions/theorems to add>
 **Tests:** <proofs to complete, QuickChick properties, or extraction tests to
            add; "none — pure refactoring" if not applicable>
-**Docs:** <coqdoc comments to write/update. Use the `documentation` skill to
+**Docs:** <rocqdoc comments to write/update. Use the `documentation` skill to
          determine which docs are affected.>
 
 **Spec:**
@@ -80,7 +80,7 @@ Example:
           `Record BinaryAgent`
 **Tests:** Proof that a sample binary agent satisfies `agent_sig`; QuickChick
           property on the arity invariant
-**Docs:** coqdoc comment block on `BinaryAgent` stating the invariant and an
+**Docs:** rocqdoc comment block on `BinaryAgent` stating the invariant and an
           example
 
 **Spec:**
@@ -146,7 +146,7 @@ When creating a new task issue (`gh issue create`, label `task`), follow these
 rules (they apply to the issue body):
 
 - **Specify the statement upfront.** If the task introduces a definition or
-  theorem, include the exact Coq signature (types, parameters) in the task
+  theorem, include the exact Rocq signature (types, parameters) in the task
   description.
 - **Keep tasks single-responsibility.** A task should do one thing. If it
   requires more than 5 sub-items or spans multiple unrelated concerns, split it

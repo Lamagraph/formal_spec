@@ -12,7 +12,7 @@ type: Proposal
 
 **Proposal**
 
-<!-- What to add. If it introduces definitions/theorems, sketch the Coq
+<!-- What to add. If it introduces definitions/theorems, sketch the Rocq
      signatures. Name the module it belongs to per docs/design.md. -->
 
 **Alternatives considered**

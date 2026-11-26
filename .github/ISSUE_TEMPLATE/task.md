@@ -17,13 +17,13 @@ type: Task
 ## Acceptance criteria
 
 <!-- Concrete, checkable conditions that mean the task is done. Every clause
-     here must be traceable to committed, checked Coq. -->
+     here must be traceable to committed, checked Rocq. -->
 
 - [ ]
 
 ## Statement (if it introduces definitions/theorems)
 
-<!-- Exact Coq signatures (types, parameters) for any new definition, record,
+<!-- Exact Rocq signatures (types, parameters) for any new definition, record,
      or theorem. Leave blank if not applicable. -->
 
 ## Equivalence / reuse

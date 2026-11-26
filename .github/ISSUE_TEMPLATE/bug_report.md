@@ -13,7 +13,7 @@ type: Bug
 **Expected vs. actual**
 
 <!-- What should hold / what the build or a proof reports instead. Include the
-     exact Coq error or `Goal` state if it is a proof failure. -->
+     exact Rocq error or `Goal` state if it is a proof failure. -->
 
 **Reproduction**
 
