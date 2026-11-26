@@ -2802,3 +2802,66 @@ Proof.
   { exact (step_star_cons A S N M'' M'' Hstep' (step_star_refl A S M'')). }
   { exact (step_star_cons A S N N' M'' Hstep0 (IH Hstep Hstep')). }
 Qed.
+
+(**************************************************************************)
+(** ** Normal forms and normalizability *)
+
+(** [is_normal_form A Ar N] holds when [N] contains no active (reducible)
+    pair: no rule can fire on it (§4.6). *)
+Definition is_normal_form (A : Type) (Ar : A -> nat) (N : Net A) : Prop :=
+  forall a b, ~ is_active_pair A Ar N a b.
+
+(** [normalizes_to A S N N'] holds when [N'] is a normal form reachable
+    from [N] by a (possibly empty) sequence of steps of [S] (§4.6). *)
+Definition normalizes_to (A : Type) (S : System A) (N N' : Net A) : Prop :=
+  is_normal_form A (sys_arity S) N' /\ step_star A S N N'.
+
+(** [is_normalizable A S N] holds when some normal form is reachable from
+    [N] by a (possibly empty) sequence of steps of [S] (§4.6). *)
+Definition is_normalizable (A : Type) (S : System A) (N : Net A) : Prop :=
+  exists N', normalizes_to A S N N'.
+
+(** [is_strongly_normalizable A S N] holds when no infinite step-sequence
+    starts from [N] — equivalently, every reduction sequence from [N] is
+    finite (§4.6). This is the "no infinite sequence" characterization,
+    chosen over the inductive one because it is the form used by the §4.7(1)
+    result. *)
+Definition is_strongly_normalizable (A : Type) (S : System A) (N : Net A) : Prop :=
+  forall (f : nat -> Net A), f 0 = N -> (forall n, step A S (f n) (f (n + 1))) -> False.
+
+(** A normal form has no outgoing step: no rule can fire on it. *)
+Lemma nf_no_step (A : Type) (S : System A) (N N' : Net A)
+      (Hnf : is_normal_form A (sys_arity S) N) :
+  ~ step A S N N'.
+Proof.
+  intro Hstep.
+  destruct Hstep as [N N' a b α β r Hwf Hap _ _ _ _ _].
+  apply Hnf in Hap.
+  exact Hap.
+Qed.
+
+(** A single step is a (one-element) star sequence. *)
+Lemma step_star_step (A : Type) (S : System A) (N N' : Net A)
+      (H : step A S N N') : step_star A S N N'.
+Proof.
+  exact (step_star_cons A S N N' N' H (step_star_refl A S N')).
+Qed.
+
+(** A normal form normalizes to itself (the empty sequence). *)
+Lemma normalizes_to_of_nf (A : Type) (S : System A) (N : Net A)
+      (Hnf : is_normal_form A (sys_arity S) N) :
+  normalizes_to A S N N.
+Proof.
+  split.
+  - exact Hnf.
+  - exact (step_star_refl A S N).
+Qed.
+
+(** A normal form is normalizable (to itself). *)
+Lemma is_normalizable_of_nf (A : Type) (S : System A) (N : Net A)
+      (Hnf : is_normal_form A (sys_arity S) N) :
+  is_normalizable A S N.
+Proof.
+  exists N.
+  exact (normalizes_to_of_nf A S N Hnf).
+Qed.
