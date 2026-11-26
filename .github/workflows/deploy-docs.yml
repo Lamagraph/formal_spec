@@ -1,0 +1,74 @@
+# Deploys the documentation site to GitHub Pages: the start page
+# (site/index.html) plus the rocqdoc output extracted from the .v sources
+# (served under /doc/). The site reflects the released spec, so it deploys
+# on push to main (at release); workflow_dispatch allows manual runs.
+#
+# The build mirrors .github/workflows/ci.yml (same image, same unpin-dune
+# hook), so the prover is never compiled from source. The site is deployed
+# as a Pages artifact (Actions-based Pages; no HTML in git).
+name: Deploy documentation site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: coq-community/docker-coq-action@v1
+        with:
+          opam_file: 'lamagraph-formal-spec.opam'
+          custom_image: 'rocq/rocq-prover:9.3'
+          # Same as ci.yml: the image pins dune 3.21.1, and opam never
+          # upgrades a pinned package — but (using rocq 0.14) needs
+          # dune >= 3.24.
+          before_install: |
+            startGroup "Unpin dune (image pins 3.21.1; project needs >= 3.24)"
+              opam pin remove dune
+            endGroup
+          before_script: |
+            startGroup "Workaround permission issue"
+              sudo chown -R 1000:1000 .
+            endGroup
+          script: |
+            startGroup "Docs (rocqdoc)"
+              dune build @doc
+            endGroup
+            startGroup "Stage site"
+              mkdir -p site-dist/doc
+              cp site/index.html site-dist/index.html
+              cp -r _build/default/src/LamaGraph.html/. site-dist/doc/
+            endGroup
+
+      - name: Revert permissions
+        # to avoid a warning at cleanup time
+        if: ${{ always() }}
+        run: sudo chown -R 1001:116 .
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site-dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
