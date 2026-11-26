@@ -148,6 +148,24 @@ issue it fully resolves (`Fixes #N` for defects, `Closes #N` otherwise). A
 task that only partially addresses a linked issue uses a bare `#N` reference
 (no keyword).
 
+### Dependabot
+
+`.github/dependabot.yml` is the source of truth for the exact settings; this
+subsection covers only the conventions and the decisions behind them.
+
+- **Scope:** GitHub Actions only.
+- **Handling a Dependabot PR:** squash-merge to `dev` after CI is green —
+  the workflow's `pull_request` trigger runs the full quality gate on every
+  bot PR automatically. Skim the changelog on major bumps before merging.
+  Bot PRs do not use the task/subtask commit model; the squash-merged
+  commit message (the PR title) is the record.
+- **Opam dependencies are manual on purpose.** Dependabot has no opam
+  ecosystem. The prover version is pinned by the CI image tag
+  (`rocq/rocq-prover:9.3`); the opam bounds are floors for fresh
+  environments. Bump them deliberately, paired with the image-tag bump.
+- **Activation:** Dependabot reads its config from the default branch
+  (`main`), so the configuration takes effect at the next release.
+
 ## CI as source of truth
 
 `.github/workflows/ci.yml` is the source of truth for what the quality gate

@@ -1,10 +1,6 @@
-# Dependabot configuration. Tracks GitHub Actions only — Dependabot has no
-# opam ecosystem, so the opam dependencies (dune, rocq-core, rocq-stdlib,
-# odoc) are updated manually; see "Dependabot" in docs/developer.md for the
-# rationale and the PR-handling convention.
-#
-# Note: Dependabot reads this file from the default branch (main), so it
-# activates at the next release even though PRs target dev.
+# Dependabot configuration — GitHub Actions only. Conventions, rationale
+# (manual opam updates), and activation: see the "Dependabot" subsection in
+# docs/developer.md.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
