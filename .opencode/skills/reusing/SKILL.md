@@ -5,7 +5,7 @@ description: Use before creating any new code, definitions, lemmas, or documenta
 
 # Reusing
 
-Before writing new Coq or docs, search for existing material and reuse or
+Before writing new Rocq or docs, search for existing material and reuse or
 generalize it. Duplicating an existing definition, lemma, notation, or doc
 section violates the project's single-source-of-truth principle.
 
@@ -26,7 +26,7 @@ Run through these before creating new material:
       reuse rather than re-deriving it.
 - [ ] **Tests** — check `tests/` for existing QuickChick properties or
       extraction harnesses to extend rather than duplicate.
-- [ ] **Docs** — check `docs/` and existing coqdoc comments for a section to
+- [ ] **Docs** — check `docs/` and existing rocqdoc comments for a section to
       update rather than add a new page.
 - [ ] **External libraries** — before defining foundational material
       (arithmetic, orders, relations, containers, …), check whether an
