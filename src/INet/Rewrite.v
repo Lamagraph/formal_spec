@@ -2865,3 +2865,255 @@ Proof.
   exists N.
   exact (normalizes_to_of_nf A S N Hnf).
 Qed.
+
+(**************************************************************************)
+(** ** Pair preservation and commutation (§4.7 setup) *)
+
+(** Two DISTINCT active pairs in a well-formed net share no agents at all:
+    they are pairwise disjoint. This is the four-inequality form of
+    [pair_disjoint] and is the disjointness precondition for
+    [raw_splice_pres_pair] and [step_commuting]. The premise [Hdist] says the
+    two pairs are not the same pair in either orientation. *)
+Lemma pair_disjoint_full (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (a b c d : nat)
+      (Hab : is_active_pair A Ar N a b)
+      (Hcd : is_active_pair A Ar N c d)
+      (Hdist : ~ ((a = c /\ b = d) \/ (a = d /\ b = c))) :
+  a <> c /\ a <> d /\ b <> c /\ b <> d.
+Proof.
+  split; [ | split; [ | split; [ | ]]].
+  - (* a <> c *)
+    intro Hac.
+    apply Hdist. left. split; [exact Hac | ].
+    apply (pair_disjoint A Ar N H a b c d Hab Hcd). exact Hac.
+  - (* a <> d *)
+    intro Had.
+    apply Hdist. right. split; [exact Had | ].
+    apply (pair_disjoint A Ar N H a b d c Hab (is_active_pair_sym A Ar N c d Hcd)).
+    exact Had.
+  - (* b <> c *)
+    intro Hbc.
+    apply Hdist. right. split.
+    + apply (pair_disjoint A Ar N H b a c d (is_active_pair_sym A Ar N a b Hab) Hcd).
+      exact Hbc.
+    + exact Hbc.
+  - (* b <> d *)
+    intro Hbd.
+    apply Hdist. left. split.
+    + apply (pair_disjoint A Ar N H b a d c
+         (is_active_pair_sym A Ar N a b Hab) (is_active_pair_sym A Ar N c d Hcd)).
+      exact Hbd.
+    + exact Hbd.
+Qed.
+
+(** A link of [N] whose two ends sit on agents other than [a] and [b] is kept
+    unchanged by [raw_splice N a b r]: it is not the main–main link (so it
+    survives the filter) and both of its endpoints are off the boundary (so
+    [rewire_endpoint_kept] leaves them fixed). This is the link-level form of
+    the disjointness preservation. *)
+Lemma raw_splice_link_kept (A : Type) (Ar : A -> nat) (N : Net A) (a b : nat) (r : Rule A)
+      (l : port_ref * port_ref)
+      (Hl : In l (nt_links N))
+      (Hnotmm : is_main_main_link a b l = false)
+      (Hend : forall e, link_end l e -> agent_of e <> a /\ agent_of e <> b) :
+  In l (nt_links (raw_splice A Ar N a b r)).
+Proof.
+  change (In l (splice_links A Ar N a b r)).
+  unfold splice_links.
+  apply in_or_app. left.
+  (* rewire_link l = l: both endpoints are off the boundary. *)
+  assert (Hrw : rewire_link A Ar N a b r l = l).
+  { unfold rewire_link.
+    assert (Hf : rewire_endpoint A Ar N a b r (fst l) = fst l).
+    { destruct (fst l) as [x p] eqn:Hfl.
+      assert (Hle : link_end l (x, p)). { left. exact Hfl. }
+      apply (rewire_endpoint_kept A Ar N a b r x p).
+      + apply (not_true_is_false (Nat.eqb x a)).
+        intro Heq.
+        apply (proj1 (Hend (x, p) Hle)).
+        apply (proj1 (Nat.eqb_eq x a)) in Heq. exact Heq.
+      + apply (not_true_is_false (Nat.eqb x b)).
+        intro Heq.
+        apply (proj2 (Hend (x, p) Hle)).
+        apply (proj1 (Nat.eqb_eq x b)) in Heq. exact Heq. }
+    assert (Hs : rewire_endpoint A Ar N a b r (snd l) = snd l).
+    { destruct (snd l) as [x p] eqn:Hsl.
+      assert (Hle : link_end l (x, p)). { right. exact Hsl. }
+      apply (rewire_endpoint_kept A Ar N a b r x p).
+      + apply (not_true_is_false (Nat.eqb x a)).
+        intro Heq.
+        apply (proj1 (Hend (x, p) Hle)).
+        apply (proj1 (Nat.eqb_eq x a)) in Heq. exact Heq.
+      + apply (not_true_is_false (Nat.eqb x b)).
+        intro Heq.
+        apply (proj2 (Hend (x, p) Hle)).
+        apply (proj1 (Nat.eqb_eq x b)) in Heq. exact Heq. }
+    rewrite Hf, Hs.
+    destruct l as [[x1 p1] [x2 p2]]. reflexivity. }
+  (* l survives the filter: it is a link of N and not the main–main link. *)
+  assert (Hin : In (rewire_link A Ar N a b r l)
+         (map (rewire_link A Ar N a b r)
+            (filter (fun l => negb (is_main_main_link a b l)) (nt_links N)))).
+  { apply (In_map (rewire_link A Ar N a b r)
+         (filter (fun l => negb (is_main_main_link a b l)) (nt_links N)) l).
+    apply (proj2 (filter_In (fun l => negb (is_main_main_link a b l)) l (nt_links N))).
+    split.
+    - exact Hl.
+    - change (negb (is_main_main_link a b l) = true).
+      apply (proj2 (negb_true_iff _)). exact Hnotmm. }
+  rewrite Hrw in Hin.
+  exact Hin.
+Qed.
+
+(** Reducing an active pair ([a], [b]) leaves every OTHER active pair intact:
+    if ([c], [d]) is an active pair of [N] disjoint from ([a], [b]), then
+    ([c], [d]) is still an active pair of [raw_splice N a b r] — the agents
+    [c], [d] and their main link are untouched by the splice, which only
+    removes ([a], [b]) and rewires links incident to the pair's boundary.
+    Concrete (same ids), no isomorphism needed. This disjointness-driven
+    preservation gates the commuting lemma. *)
+Lemma raw_splice_pres_pair (A : Type) (Ar : A -> nat) (N : Net A) (a b c d : nat) (r : Rule A)
+      (Hwf : well_formed A Ar N)
+      (Hap_ab : is_active_pair A Ar N a b)
+      (Hap_cd : is_active_pair A Ar N c d)
+      (Hdisj : a <> c /\ a <> d /\ b <> c /\ b <> d) :
+  is_active_pair A Ar (raw_splice A Ar N a b r) c d.
+Proof.
+  set (M := raw_splice A Ar N a b r).
+  unfold is_active_pair.
+  destruct Hap_cd as [Hcd_neq [Hc_ag [Hd_ag Hcd_link]]].
+  destruct Hdisj as [Hac [Had [Hbc Hbd]]].
+  refine (conj Hcd_neq (conj _ (conj _ _))).
+  - (* has_agent M c: c is an agent of N, c <> a, c <> b, so it survives. *)
+    apply (proj2 (has_agent_In A M c)).
+    change (In c (map fst (splice_agents A N a b r))).
+    unfold splice_agents.
+    rewrite map_app.
+    apply in_or_app. left.
+    apply (proj2 (in_map_iff (fun p : nat * A => fst p)
+           (filter (fun p => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) (nt_agents N)) c)).
+    apply (proj1 (has_agent_In A N c)) in Hc_ag.
+    apply (proj1 (in_map_iff (fun p : nat * A => fst p) (nt_agents N) c)) in Hc_ag.
+    destruct Hc_ag as [p [Hpc Hin]].
+    exists p.
+    split.
+    + exact Hpc.
+    + apply (proj2 (filter_In (fun p => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) p (nt_agents N))).
+      split.
+      * exact Hin.
+      * { rewrite Hpc.
+          change (negb (Nat.eqb c a) && negb (Nat.eqb c b) = true).
+          apply (proj2 (andb_true_iff _ _)); split.
+          - apply (proj2 (negb_true_iff _)).
+            destruct (Nat.eqb c a) eqn:Hb.
+            + apply (proj1 (Nat.eqb_eq c a)) in Hb.
+              exfalso.
+              apply Hac. symmetry. exact Hb.
+            + reflexivity.
+          - apply (proj2 (negb_true_iff _)).
+            destruct (Nat.eqb c b) eqn:Hb.
+            + apply (proj1 (Nat.eqb_eq c b)) in Hb.
+              exfalso.
+              apply Hbc. symmetry. exact Hb.
+            + reflexivity. }
+  - (* has_agent M d: symmetric. *)
+    apply (proj2 (has_agent_In A M d)).
+    change (In d (map fst (splice_agents A N a b r))).
+    unfold splice_agents.
+    rewrite map_app.
+    apply in_or_app. left.
+    apply (proj2 (in_map_iff (fun p : nat * A => fst p)
+           (filter (fun p => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) (nt_agents N)) d)).
+    apply (proj1 (has_agent_In A N d)) in Hd_ag.
+    apply (proj1 (in_map_iff (fun p : nat * A => fst p) (nt_agents N) d)) in Hd_ag.
+    destruct Hd_ag as [p [Hpd Hin]].
+    exists p.
+    split.
+    + exact Hpd.
+    + apply (proj2 (filter_In (fun p => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) p (nt_agents N))).
+      split.
+      * exact Hin.
+      * { rewrite Hpd.
+          change (negb (Nat.eqb d a) && negb (Nat.eqb d b) = true).
+          apply (proj2 (andb_true_iff _ _)); split.
+          - apply (proj2 (negb_true_iff _)).
+            destruct (Nat.eqb d a) eqn:Hb.
+            + apply (proj1 (Nat.eqb_eq d a)) in Hb.
+              exfalso.
+              apply Had. symmetry. exact Hb.
+            + reflexivity.
+          - apply (proj2 (negb_true_iff _)).
+            destruct (Nat.eqb d b) eqn:Hb.
+            + apply (proj1 (Nat.eqb_eq d b)) in Hb.
+              exfalso.
+              apply Hbd. symmetry. exact Hb.
+            + reflexivity. }
+  - (* has_link M (c,0) (d,0): the main link of (c,d) survives unchanged. *)
+    unfold has_link in Hcd_link.
+    destruct Hcd_link as [Hl|Hl].
+    + (* l = ((c,0),(d,0)) is a link of N. *)
+      left.
+      assert (Hca_f : Nat.eqb c a = false). { destruct (Nat.eqb c a) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq c a)) in Hb. apply Hac. symmetry. exact Hb. - reflexivity. }
+      assert (Hdb_f : Nat.eqb d b = false). { destruct (Nat.eqb d b) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq d b)) in Hb. apply Hbd. symmetry. exact Hb. - reflexivity. }
+      assert (Hcb_f : Nat.eqb c b = false). { destruct (Nat.eqb c b) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq c b)) in Hb. apply Hbc. symmetry. exact Hb. - reflexivity. }
+      assert (Hda_f : Nat.eqb d a = false). { destruct (Nat.eqb d a) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq d a)) in Hb. apply Had. symmetry. exact Hb. - reflexivity. }
+      assert (Hnotmm : is_main_main_link a b ((c, 0), (d, 0)) = false).
+      { unfold is_main_main_link. cbn.
+        rewrite Hca_f, Hdb_f, Hcb_f, Hda_f.
+        simpl. reflexivity. }
+      assert (Hend : forall e, link_end ((c, 0), (d, 0)) e -> agent_of e <> a /\ agent_of e <> b).
+      { intros e He.
+        destruct He as [He|He].
+        - rewrite <- He. split.
+          + intro H. apply Hac. symmetry. exact H.
+          + intro H. apply Hbc. symmetry. exact H.
+        - rewrite <- He. split.
+          + intro H. apply Had. symmetry. exact H.
+          + intro H. apply Hbd. symmetry. exact H. }
+      exact (raw_splice_link_kept A Ar N a b r ((c, 0), (d, 0)) Hl Hnotmm Hend).
+    + (* l = ((d,0),(c,0)) is a link of N. *)
+      right.
+      assert (Hca_f : Nat.eqb c a = false). { destruct (Nat.eqb c a) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq c a)) in Hb. apply Hac. symmetry. exact Hb. - reflexivity. }
+      assert (Hdb_f : Nat.eqb d b = false). { destruct (Nat.eqb d b) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq d b)) in Hb. apply Hbd. symmetry. exact Hb. - reflexivity. }
+      assert (Hcb_f : Nat.eqb c b = false). { destruct (Nat.eqb c b) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq c b)) in Hb. apply Hbc. symmetry. exact Hb. - reflexivity. }
+      assert (Hda_f : Nat.eqb d a = false). { destruct (Nat.eqb d a) eqn:Hb. - exfalso. apply (proj1 (Nat.eqb_eq d a)) in Hb. apply Had. symmetry. exact Hb. - reflexivity. }
+      assert (Hnotmm : is_main_main_link a b ((d, 0), (c, 0)) = false).
+      { unfold is_main_main_link. cbn.
+        rewrite Hca_f, Hdb_f, Hcb_f, Hda_f.
+        simpl. reflexivity. }
+      assert (Hend : forall e, link_end ((d, 0), (c, 0)) e -> agent_of e <> a /\ agent_of e <> b).
+      { intros e He.
+        destruct He as [He|He].
+        - rewrite <- He. split.
+          + intro H. apply Had. symmetry. exact H.
+          + intro H. apply Hbd. symmetry. exact H.
+        - rewrite <- He. split.
+          + intro H. apply Hac. symmetry. exact H.
+          + intro H. apply Hbc. symmetry. exact H. }
+      exact (raw_splice_link_kept A Ar N a b r ((d, 0), (c, 0)) Hl Hnotmm Hend).
+Qed.
+
+(** Reducing one active pair ([a], [b]) leaves every other active pair
+    ([c], [d]) intact, up to the isomorphism by which the reduction's target
+    [N'] represents the raw splice of [N] at ([a], [b]) with [r]. This is the
+    step-level form of [raw_splice_pres_pair]: a [step] is exactly a raw
+    splice plus an isomorphism, so we state the preservation in terms of the
+    raw splice [raw_splice N a b r] and the isomorphism [Hiso] to [N']
+    (rather than the [step] inductive, which hides which pair was fired).
+    The preserved pair in [N'] is ([ni_map Hiso c], [ni_map Hiso d]): the
+    isomorphism's map carries the surviving agents ([c], [d]) to their images
+    in [N']. (Injectivity of the map on the raw splice's agents is available
+    to callers directly from [ni_inj Hiso].) Uses [net_iso_pres_active_pair]. *)
+Lemma step_preserves_pair (A : Type) (S : System A) (N N' : Net A)
+      (a b c d : nat) (r : Rule A)
+      (Hiso : net_iso A (sys_arity S) (raw_splice A (sys_arity S) N a b r) N')
+      (Hwf : well_formed A (sys_arity S) N)
+      (Hap_ab : is_active_pair A (sys_arity S) N a b)
+      (Hap_cd : is_active_pair A (sys_arity S) N c d)
+      (Hdisj : a <> c /\ a <> d /\ b <> c /\ b <> d) :
+  is_active_pair A (sys_arity S) N' (ni_map Hiso c) (ni_map Hiso d).
+Proof.
+  set (Ar := sys_arity S).
+  apply (net_iso_pres_active_pair A Ar (raw_splice A Ar N a b r) N' Hiso c d).
+  apply (raw_splice_pres_pair A Ar N a b c d r Hwf Hap_ab Hap_cd Hdisj).
+Qed.
