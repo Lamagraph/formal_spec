@@ -11,7 +11,15 @@
  * [Agent] and [Rewrite].
  *)
 
+Require Import Stdlib.Arith.PeanoNat.
+Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
+Require Import Stdlib.Lists.Finite.
+Require Import Stdlib.micromega.Lia.
+Require Import Stdlib.Sorting.Mergesort.
+Require Import Stdlib.Sorting.Permutation.
+Require Import Stdlib.Sorting.Sorted.
+Require Import Stdlib.Structures.Orders.
 
 (* [Stdlib.Lists.List] transitively opens [nat_scope] (via [PeanoNat]), which
    would read the infix [*] as natural-number multiplication. Reopen
@@ -99,17 +107,21 @@ Definition port_used (A : Type) (N : Net A) (pr : port_ref) : Prop :=
     label is the number of its auxiliary ports; the port-range check needs it,
     which is why [Ar] is a parameter).
 
-    It is a record whose four fields are the four well-formedness conditions,
+    It is a record whose five fields are the five well-formedness conditions,
     each exposed as a named projection so that later modules can address them
     individually (this is the "projection lemma" for each condition — no
-    separate lemma is needed, [wf_ids H], [wf_links H], [wf_ports H] and
-    [wf_ends H] extract the corresponding conjunct from a proof [H]):
-    * [wf_ids] — unique agent ids: no agent id carries two different labels,
+    separate lemma is needed, [wf_ids H], [wf_links H], [wf_ports H],
+    [wf_ends H] and [wf_unique_ids H] extract the corresponding conjunct from
+    a proof [H]):
+    * [wf_ids] — functional labels: no agent id carries two different labels,
       so the label of a present agent is well-defined;
     * [wf_links] — valid links: every link joins two present agents, and each
       end's port number is in range for that agent's arity;
     * [wf_ports] — port-injectivity: no port is an end of two distinct links;
-    * [wf_ends] — distinct link ends: the two ends of each link differ. *)
+    * [wf_ends] — distinct link ends: the two ends of each link differ;
+    * [wf_unique_ids] — unique agent ids: no agent id appears more than once
+      in the agent list (needed so that enumerating the agents' ports, as
+      [interface] does, yields no duplicates). *)
 Record well_formed (A : Type) (Ar : A -> nat) (N : Net A) : Prop := mkWellFormed {
   wf_ids : forall a l1 l2,
     In (a, l1) (nt_agents N) -> In (a, l2) (nt_agents N) -> l1 = l2;
@@ -123,16 +135,18 @@ Record well_formed (A : Type) (Ar : A -> nat) (N : Net A) : Prop := mkWellFormed
   wf_ports : forall pr l1 l2,
     In l1 (nt_links N) -> In l2 (nt_links N) -> l1 <> l2
     -> ~(link_end l1 pr /\ link_end l2 pr);
-  wf_ends : forall l, In l (nt_links N) -> fst l <> snd l
+  wf_ends : forall l, In l (nt_links N) -> fst l <> snd l;
+  wf_unique_ids : NoDup (map fst (nt_agents N))
 }.
 
 (* The parameters [A], [Ar], [N] are recoverable from a [well_formed] proof,
    so make them implicit in the projections: [wf_ids H], [wf_links H],
-   [wf_ports H] and [wf_ends H] read naturally. *)
+   [wf_ports H], [wf_ends H] and [wf_unique_ids H] read naturally. *)
 Arguments wf_ids {A Ar N} _.
 Arguments wf_links {A Ar N} _.
 Arguments wf_ports {A Ar N} _.
 Arguments wf_ends {A Ar N} _.
+Arguments wf_unique_ids {A Ar N} _.
 
 (**************************************************************************)
 (** ** Basic facts *)
@@ -155,4 +169,408 @@ Lemma wf_link_agents (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A A
   has_agent A N a /\ has_agent A N b.
 Proof.
   destruct (wf_links H a b p q Hl) as [Ha [Hb _]]; exact (conj Ha Hb).
+Qed.
+
+(**************************************************************************)
+(** ** Free ports and the net interface *)
+
+(** [is_free A Ar N pr] holds when the port reference [pr] is a free port of
+    the net [N]: the agent it refers to is present in [N], the port number is
+    in range for that agent's arity, and the port is not an end of any link.
+    The agent's presence is witnessed by the existence of its label [la],
+    which simultaneously supplies the arity bound [Ar la]. *)
+Definition is_free (A : Type) (Ar : A -> nat) (N : Net A) (pr : port_ref) : Prop :=
+  exists la, agent_label A N (agent_of pr) = Some la
+             /\ port_of pr <= Ar la
+             /\ ~ port_used A N pr.
+
+(**************************************************************************)
+(** ** Boolean mirrors for filtering *)
+
+(** [filter] takes a [bool] predicate, but [link_end] and [port_used] are
+    propositions. These boolean mirrors compute the same facts decidablely:
+    each is [true] exactly when the corresponding proposition holds (see the
+    [_spec] lemmas). They exist solely to build [free_ports_of] below. *)
+
+(** Boolean mirror of [link_end]. *)
+Definition link_end_b (l : port_ref * port_ref) (pr : port_ref) : bool :=
+  match l, pr with
+  | ((a1, p1), (a2, p2)), (a3, p3) =>
+      (Nat.eqb a1 a3 && Nat.eqb p1 p3) || (Nat.eqb a2 a3 && Nat.eqb p2 p3)
+  end.
+
+(** Boolean mirror of [port_used]. *)
+Definition port_used_b (A : Type) (N : Net A) (pr : port_ref) : bool :=
+  existsb (fun l => link_end_b l pr) (nt_links N).
+
+Lemma link_end_b_spec (l : port_ref * port_ref) (pr : port_ref) :
+  link_end_b l pr = true <-> link_end l pr.
+Proof.
+  destruct l as [[a1 p1] [a2 p2]]; destruct pr as [a3 p3]; simpl.
+  rewrite orb_true_iff, andb_true_iff, andb_true_iff.
+  repeat rewrite Nat.eqb_eq.
+  split.
+  - intro H. destruct H as [H | H].
+    + left. destruct H as [H1 H2]. subst. reflexivity.
+    + right. destruct H as [H1 H2]. subst. reflexivity.
+  - intro H. destruct H as [H | H].
+    + left. injection H as -> ->. split; reflexivity.
+    + right. injection H as -> ->. split; reflexivity.
+Qed.
+
+Lemma port_used_b_spec (A : Type) (N : Net A) (pr : port_ref) :
+  port_used_b A N pr = true <-> port_used A N pr.
+Proof.
+  unfold port_used_b.
+  rewrite existsb_exists.
+  split.
+  - intro H. destruct H as [l [Hl Hle]].
+    exists l. split; [exact Hl | ].
+    simpl in Hle.
+    rewrite link_end_b_spec in Hle.
+    exact Hle.
+  - intro H. destruct H as [l [Hl Hle]].
+    exists l. split; [exact Hl | ].
+    simpl.
+    rewrite link_end_b_spec.
+    exact Hle.
+Qed.
+
+(**************************************************************************)
+(** ** Free ports of one agent, and the net interface *)
+
+(** [free_ports_of A Ar N a alpha] is the list of the free ports of agent [a]
+    (whose label is [alpha]), in increasing port-number order: the ports
+    [0 .. Ar alpha] that are not an end of any link of [N]. *)
+Definition free_ports_of (A : Type) (Ar : A -> nat) (N : Net A) (a : nat) (alpha : A) : list port_ref :=
+  map (fun p => (a, p))
+      (filter (fun p => negb (port_used_b A N (a, p))) (seq 0 (S (Ar alpha)))).
+
+(**************************************************************************)
+(** ** Lexicographic order on port references *)
+
+(** [PortRefOrder] is the lexicographic order on port references — agent id
+    first, then port number — as a total boolean order, the interface required
+    by the stdlib sorting functor. *)
+Module PortRefOrder <: TotalLeBool'.
+  Definition t := port_ref.
+  Definition leb (x y : port_ref) : bool :=
+    match x, y with
+    | (a1, p1), (a2, p2) =>
+        if Nat.eqb a1 a2 then Nat.leb p1 p2 else Nat.ltb a1 a2
+    end.
+  Infix "<=?" := leb (at level 70, no associativity).
+
+  (** [leb] computes the lexicographic order: [leb x y = true] exactly when
+      [x] precedes [y] (agent id first, then port number). *)
+  Lemma leb_rel (a1 p1 a2 p2 : nat) :
+    leb (a1, p1) (a2, p2) = true <-> a1 < a2 \/ (a1 = a2 /\ p1 <= p2).
+  Proof.
+    simpl.
+    case_eq (Nat.eqb a1 a2); intros Hb.
+    - apply (Nat.eqb_eq a1 a2) in Hb.
+      subst a2.
+      split.
+      + intro H. rewrite Nat.leb_le in H. right. split; [reflexivity | exact H].
+      + intro H. destruct H as [Hlt | [Heq Hle]].
+        * exfalso. apply Nat.lt_irrefl in Hlt. contradiction.
+        * rewrite Nat.leb_le. exact Hle.
+    - assert (Hne : a1 <> a2).
+      { intro Ha. subst a2.
+        assert (Htrue : Nat.eqb a1 a1 = true) by (apply (Nat.eqb_eq a1 a1); reflexivity).
+        rewrite Htrue in Hb.
+        discriminate Hb. }
+      split.
+      + intro H. rewrite Nat.ltb_lt in H. left. exact H.
+      + intro H. destruct H as [Hlt | [Heq Hle]].
+        * rewrite Nat.ltb_lt. exact Hlt.
+        * exfalso. apply Hne. exact Heq.
+  Qed.
+
+  Theorem leb_total : forall x y, (x <=? y) = true \/ (y <=? x) = true.
+  Proof.
+    intros x y. destruct x as [a1 p1]; destruct y as [a2 p2].
+    rewrite (leb_rel a1 p1 a2 p2), (leb_rel a2 p2 a1 p1).
+    lia.
+  Qed.
+End PortRefOrder.
+
+(** [PortRefSort] is the stdlib mergesort instantiated with [PortRefOrder]:
+    [PortRefSort.sort l] is a permutation of [l] that is sorted in
+    lexicographic (agent id, port number) order. *)
+Module PortRefSort := Mergesort.Sort PortRefOrder.
+
+(** The lexicographic order on port references, as a [Prop]: [port_ref_le x y]
+    holds when [x] precedes [y] or equals it (agent id first, then port
+    number). This is the relation in which [interface] is sorted. *)
+Definition port_ref_le (x y : port_ref) : Prop :=
+  match x, y with
+  | (a1, p1), (a2, p2) => a1 < a2 \/ (a1 = a2 /\ p1 <= p2)
+  end.
+
+(** [PortRefOrder.leb] computes [port_ref_le]. *)
+Lemma port_ref_leb_spec (x y : port_ref) :
+  PortRefOrder.leb x y = true <-> port_ref_le x y.
+Proof.
+  destruct x as [a1 p1]; destruct y as [a2 p2]; simpl.
+  exact (PortRefOrder.leb_rel a1 p1 a2 p2).
+Qed.
+
+(** Changing the relation of a [Sorted.HdRel] / [Sorted.Sorted] proof: if [R]
+    and [R'] agree pointwise, a list that is [R]-sorted is also [R']-sorted.
+    This moves the sortedness certificate from the boolean order
+    [PortRefOrder.leb] (what the sort functor certifies) to the propositional
+    [port_ref_le]. *)
+Lemma HdRel_rel_change (A : Type) (R R' : A -> A -> Prop) (x : A) (l : list A)
+      (H : forall x y, R x y <-> R' x y) :
+  Sorted.HdRel R x l -> Sorted.HdRel R' x l.
+Proof.
+  intros Hh. induction Hh as [|y l Hy]; constructor.
+  - rewrite (H x y) in Hy. exact Hy.
+Qed.
+
+Lemma Sorted_rel_change (A : Type) (R R' : A -> A -> Prop) (l : list A)
+      (H : forall x y, R x y <-> R' x y) :
+  Sorted.Sorted R l -> Sorted.Sorted R' l.
+Proof.
+  intros Hs.
+  revert Hs.
+  induction l as [|a tail IHl]; intros Hs.
+  - constructor.
+  - inversion Hs.
+    constructor.
+    + apply IHl. assumption.
+    + eapply HdRel_rel_change; eassumption.
+Qed.
+
+(** [interface A Ar N] is the list of all free ports of [N], in canonical
+    order: sorted by (agent id, port number). It is total and deterministic —
+    a pure function of [N] — the stable enumeration of free ports that the
+    architecture layer schedules over. *)
+Definition interface (A : Type) (Ar : A -> nat) (N : Net A) : list port_ref :=
+  PortRefSort.sort
+    (flat_map (fun p => free_ports_of A Ar N (fst p) (snd p)) (nt_agents N)).
+
+(**************************************************************************)
+(** ** Facts about the lookup and the free-port lists *)
+
+(** If [a] occurs in the agent list [l] with label [alpha], and [l] is
+    functional on [a] (every occurrence of [a] carries the same label), then
+    the lookup returns [Some alpha]. *)
+Lemma agent_label_lookup_In (A : Type) (a : nat) (l : list (nat * A)) (alpha : A)
+      (Ha : In (a, alpha) l)
+      (Hfun : forall l1 l2, In (a, l1) l -> In (a, l2) l -> l1 = l2) :
+  agent_label_lookup A a l = Some alpha.
+Proof.
+  revert Ha Hfun.
+  induction l as [|(id, lbl) rest IH]; intros Ha Hfun.
+  - inversion Ha.
+  - destruct (Nat.eqb id a) eqn:Hb.
+    + apply (Nat.eqb_eq id a) in Hb. subst id.
+      simpl.
+      assert (Heq : Nat.eqb a a = true) by (apply (Nat.eqb_eq a a); reflexivity).
+      rewrite Heq. simpl.
+      apply f_equal.
+      apply Hfun.
+      * apply in_eq.
+      * exact Ha.
+    + simpl. rewrite Hb. simpl.
+      destruct Ha as [H | H].
+      * exfalso.
+        injection H as -> ->.
+        assert (Htrue : Nat.eqb a a = true) by (apply (Nat.eqb_eq a a); reflexivity).
+        rewrite Htrue in Hb.
+        discriminate Hb.
+      * apply (IH H).
+        intros l1 l2 H1 H2.
+        apply Hfun; [apply in_cons; exact H1 | apply in_cons; exact H2].
+Qed.
+
+(** In a well-formed net, the label of a present agent is the label stored in
+    the agent list. *)
+Lemma agent_label_In (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (a : nat) (alpha : A) (Ha : In (a, alpha) (nt_agents N)) :
+  agent_label A N a = Some alpha.
+Proof.
+  unfold agent_label.
+  exact (agent_label_lookup_In A a (nt_agents N) alpha Ha (wf_ids H a)).
+Qed.
+
+(** If the lookup of [a] in [l] returns [Some la], then [(a, la)] occurs in
+    [l]. No well-formedness is needed: the lookup only returns labels that are
+    actually stored in the list. *)
+Lemma agent_label_lookup_Some_In (A : Type) (a : nat) (l : list (nat * A)) (la : A)
+      (Hal : agent_label_lookup A a l = Some la) :
+  In (a, la) l.
+Proof.
+  revert Hal.
+  induction l as [|(id, lbl) rest IH]; intros Hal.
+  - simpl in Hal. inversion Hal.
+  - destruct (Nat.eqb id a) eqn:Hb.
+    + apply (Nat.eqb_eq id a) in Hb. subst id.
+      simpl in Hal.
+      assert (Heq : Nat.eqb a a = true) by (apply (Nat.eqb_eq a a); reflexivity).
+      rewrite Heq in Hal. simpl in Hal.
+      injection Hal as ->.
+      apply in_eq.
+    + simpl in Hal. rewrite Hb in Hal. simpl in Hal.
+      apply in_cons.
+      exact (IH Hal).
+Qed.
+
+(** If [a]'s label is found in [N], then [(a, la)] is in the agent list. *)
+Lemma agent_label_Some_In (A : Type) (N : Net A) (a : nat) (la : A)
+      (Hal : agent_label A N a = Some la) :
+  In (a, la) (nt_agents N).
+Proof.
+  unfold agent_label.
+  exact (agent_label_lookup_Some_In A a (nt_agents N) la Hal).
+Qed.
+
+(** The free ports of one agent are distinct: the port numbers
+    [0 .. Ar alpha] are distinct, filtering preserves that, and pairing with
+    [a] is injective. *)
+Lemma free_ports_of_NoDup (A : Type) (Ar : A -> nat) (N : Net A) (a : nat) (alpha : A) :
+  NoDup (free_ports_of A Ar N a alpha).
+Proof.
+  unfold free_ports_of.
+  apply Injective_map_NoDup.
+  - intros p1 p2 H. injection H as ->. reflexivity.
+  - apply NoDup_filter.
+    apply seq_NoDup.
+Qed.
+
+(** The free-port lists of two distinct agents are disjoint: a port reference
+    in the list of agent [a] has agent id [a]. *)
+Lemma free_ports_of_disjoint (A : Type) (Ar : A -> nat) (N : Net A)
+      (a a' : nat) (alpha alpha' : A) (Hne : a <> a') (pr : port_ref) :
+  In pr (free_ports_of A Ar N a alpha) -> ~ In pr (free_ports_of A Ar N a' alpha').
+Proof.
+  unfold free_ports_of.
+  intros Hin Hin'.
+  destruct pr as [a3 p3].
+  apply in_map_iff in Hin as [p [Hpe Hp]].
+  apply in_map_iff in Hin' as [p' [Hpe' Hp']].
+  injection Hpe as ->.
+  injection Hpe' as ->.
+  exact (Hne eq_refl).
+Qed.
+
+(** If the agent ids of [agents] are unique, then the concatenation of their
+    free-port lists (as computed by [flat_map]) has no duplicates. This is the
+    NoDup core of [interface_nodup], stated over an explicit list so that the
+    induction does not fight the [nt_agents] projection. *)
+Lemma fpo_flat_NoDup (A : Type) (Ar : A -> nat) (N : Net A)
+      (agents : list (nat * A)) (Huid : NoDup (map fst agents)) :
+  NoDup (flat_map (fun p => free_ports_of A Ar N (fst p) (snd p)) agents).
+Proof.
+  induction agents as [|(a, alpha) rest IH]; simpl.
+  - apply NoDup_nil.
+  - apply NoDup_cons_iff in Huid.
+    destruct Huid as [Hnotin Huid'].
+    apply NoDup_app.
+    + apply free_ports_of_NoDup.
+    + apply IH. exact Huid'.
+    + intros pr Hin Hflat.
+      apply in_flat_map in Hflat as [pair [Hagent Hfree']].
+      destruct pair as [a' alpha'].
+      assert (Hne : a <> a').
+      { intro Heq. subst a'.
+        apply Hnotin.
+        apply in_map_iff.
+        exists (a, alpha').
+        split; [reflexivity | exact Hagent]. }
+      apply (free_ports_of_disjoint A Ar N a a' alpha alpha' Hne pr) in Hin as Hcontra.
+      exact (Hcontra Hfree').
+Qed.
+
+(**************************************************************************)
+(** ** The interface lemmas *)
+
+(** Every port reference listed in [interface] is free. *)
+Lemma interface_free (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (pr : port_ref) (Hin : In pr (interface A Ar N)) :
+  is_free A Ar N pr.
+Proof.
+  unfold interface, is_free.
+  apply (Permutation_in pr (Permutation_sym (PortRefSort.Permuted_sort _))) in Hin.
+  destruct pr as [a p].
+  apply in_flat_map in Hin as [pair [Hagent Hfree]].
+  destruct pair as [a' alpha].
+  apply in_map_iff in Hfree as [p' [Hpe Hp]].
+  injection Hpe as ->.
+  subst p'.
+  apply filter_In in Hp as [Hpseq Hpu].
+  apply in_seq in Hpseq as [Hlo Hhi].
+  change (p < S (Ar alpha)) in Hhi.
+  exists alpha.
+  split; [ | split; [ | ]].
+  + exact (agent_label_In A Ar N H a alpha Hagent).
+  + simpl.
+    apply (proj1 (Nat.lt_succ_r p (Ar alpha))) in Hhi.
+    exact Hhi.
+  + assert (Hnot : ~ port_used A N (a, p)).
+    { intro Hused.
+      simpl in Hpu.
+      apply port_used_b_spec in Hused.
+      rewrite negb_true_iff in Hpu.
+      rewrite Hused in Hpu.
+      discriminate Hpu. }
+    exact Hnot.
+Qed.
+
+(** Every free port appears in [interface]. *)
+Lemma free_in_interface (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N)
+      (pr : port_ref) (Hf : is_free A Ar N pr) :
+  In pr (interface A Ar N).
+Proof.
+  unfold interface, is_free in Hf.
+  destruct Hf as [la [Hal [Hrange Hpu]]].
+  destruct pr as [a p].
+  simpl in Hal.
+  assert (Hagent : In (a, la) (nt_agents N)).
+  { exact (agent_label_Some_In A N a la Hal). }
+  assert (Hfree : In (a, p) (free_ports_of A Ar N a la)).
+  { unfold free_ports_of.
+    apply in_map_iff.
+    exists p.
+    split.
+    - reflexivity.
+    - apply filter_In.
+      split.
+      + apply in_seq.
+        split; [lia | (simpl in Hrange; apply (proj2 (Nat.lt_succ_r p (Ar la))); exact Hrange)].
+      + assert (Hnotb : port_used_b A N (a, p) = false).
+        { destruct (port_used_b A N (a, p)) eqn:Hb.
+          - apply port_used_b_spec in Hb.
+            exfalso.
+            exact (Hpu Hb).
+          - reflexivity. }
+        rewrite negb_true_iff.
+        exact Hnotb. }
+  apply (Permutation_in (a, p) (PortRefSort.Permuted_sort _)).
+  apply in_flat_map.
+  exists (a, la).
+  split; [exact Hagent | exact Hfree].
+Qed.
+
+(** [interface] has no duplicates (in a well-formed net, whose agent ids are
+    unique). *)
+Lemma interface_nodup (A : Type) (Ar : A -> nat) (N : Net A) (H : well_formed A Ar N) :
+  NoDup (interface A Ar N).
+Proof.
+  unfold interface.
+  apply (Permutation_NoDup (PortRefSort.Permuted_sort _)).
+  apply fpo_flat_NoDup.
+  exact (wf_unique_ids H).
+Qed.
+
+(** [interface] is sorted by (agent id, port number) — for any net, no
+    well-formedness needed. *)
+Lemma interface_sorted (A : Type) (Ar : A -> nat) (N : Net A) :
+  Sorted.Sorted port_ref_le (interface A Ar N).
+Proof.
+  unfold interface.
+  apply (Sorted_rel_change _ (fun x y => PortRefOrder.leb x y = true) port_ref_le _ port_ref_leb_spec).
+  apply PortRefSort.Sorted_sort.
 Qed.
