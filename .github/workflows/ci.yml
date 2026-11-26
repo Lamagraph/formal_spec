@@ -1,0 +1,40 @@
+# The quality gate, as run in CI. This file is the source of truth for what
+# the gate runs remotely (see the `quality-gates` skill and docs/developer.md).
+#
+# NOTE (iteration 1): Coq is installed from source via opam, which is correct
+# but slow. Add an opam-switch cache (keyed on the Coq version) to speed up
+# subsequent runs once the workflow is stable.
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Coq 8.20.1
+        run: |
+          eval $(opam env)
+          opam init --disable-sandboxing -y
+          opam install coq.8.20.1 -y
+
+      - name: Build (coqc — every proof checks)
+        run: |
+          eval $(opam env)
+          make
+
+      - name: Validate (coqchk — independent re-check)
+        run: |
+          eval $(opam env)
+          make validate
+
+      - name: Docs (coqdoc)
+        run: |
+          eval $(opam env)
+          make html

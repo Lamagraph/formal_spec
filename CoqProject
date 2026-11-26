@@ -1,0 +1,12 @@
+# Coq project file for the LamaGraph formal specification.
+#
+# Consumed by `coq_makefile` to generate the Makefile (see docs/developer.md).
+# Lines starting with '-' are flags passed to coqc; other lines are .v files
+# listed in dependency order (dependencies first).
+#
+# Adding a theory: create the .v file under src/ and append it here, then
+# regenerate the Makefile. See the `add-theory` skill.
+
+-R src LamaGraph
+
+src/Basics.v

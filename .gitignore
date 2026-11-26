@@ -34,6 +34,16 @@ nlia.cache
 nra.cache
 native_compute_profile_*.data
 
+# coqdoc output
+html/
+all.pdf
+all-gal.pdf
+_coqproj/
+
+# python (helper scripts)
+__pycache__/
+*.pyc
+
 # generated timing files
 *.timing.diff
 *.v.after-timing
