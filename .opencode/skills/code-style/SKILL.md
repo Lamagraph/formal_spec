@@ -5,7 +5,7 @@ description: Use before committing to check Rocq conventions. There is no standa
 
 # Code style
 
-Coq has no canonical auto-formatter the way Python has `ruff`/`black`. Style is
+Rocq has no canonical auto-formatter the way Python has `ruff`/`black`. Style is
 enforced by **review** (see the `code-review` skill) against the conventions
 below, plus the hard requirement that the build stays green (`dune build`,
 per `docs/developer.md`).
