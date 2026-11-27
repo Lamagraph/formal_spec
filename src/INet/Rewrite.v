@@ -2754,6 +2754,15 @@ Proof.
   exact (net_iso_pres_wf A Ar (raw_splice A Ar N a b r) N' Hiso Hsp).
 Qed.
 
+(** A step starts from a well-formed net: the well-formedness premise of
+    [step_intro] is recorded in the step itself. *)
+Lemma step_pres_wf_source (A : Type) (S : System A) (N N' : Net A)
+      (H : step A S N N') : well_formed A (sys_arity S) N.
+Proof.
+  destruct H as [N N' a b α β r Hwf Hap Hla Hlb Hr Hlhs Hiso].
+  exact Hwf.
+Qed.
+
 (** [step] is compatible with isomorphism of the target: if [N] steps to
     [N'] and [N''] is isomorphic to [N'], then [N] steps to [N'']. *)
 Lemma step_iso_compat_r (A : Type) (S : System A) (N N' N'' : Net A)
@@ -2771,8 +2780,13 @@ Qed.
 
 (** [step_star A S N M] holds when [M] is reachable from [N] by a finite
     (possibly empty) sequence of steps of [S]. Defined as its own inductive
-    rather than via [ReflTransCl], which is not available in this Stdlib. *)
-Inductive step_star (A : Type) (S : System A) : Net A -> Net A -> Prop :=
+    rather than via [ReflTransCl], which is not available in this Stdlib.
+
+    [step_star] is [Type]-sorted (not [Prop]) so that the confluence proof,
+    whose goal is a [Type]-sorted sig, can induct on a [step_star] hypothesis:
+    a [Prop] inductive cannot be eliminated into a [Type] goal. This makes
+    [normalizes_to] and [is_normalizable] [Type]-sorted as well (see below). *)
+Inductive step_star (A : Type) (S : System A) : Net A -> Net A -> Type :=
 | step_star_refl : forall (N : Net A), step_star A S N N
 | step_star_cons : forall (N N' M : Net A),
     step A S N N' -> step_star A S N' M -> step_star A S N M.
@@ -2831,14 +2845,19 @@ Definition is_normal_form (A : Type) (Ar : A -> nat) (N : Net A) : Prop :=
   forall a b, ~ is_active_pair A Ar N a b.
 
 (** [normalizes_to A S N N'] holds when [N'] is a normal form reachable
-    from [N] by a (possibly empty) sequence of steps of [S] (§4.6). *)
-Definition normalizes_to (A : Type) (S : System A) (N N' : Net A) : Prop :=
-  is_normal_form A (sys_arity S) N' /\ step_star A S N N'.
+    from [N] by a (possibly empty) sequence of steps of [S] (§4.6).
+    [Type]-sorted (a pair of the normal-form proof and the star witness)
+    because [step_star] is [Type]-sorted; a [Prop] conjunction cannot hold a
+    [Type] component. *)
+Definition normalizes_to (A : Type) (S : System A) (N N' : Net A) : Type :=
+  is_normal_form A (sys_arity S) N' * step_star A S N N'.
 
 (** [is_normalizable A S N] holds when some normal form is reachable from
-    [N] by a (possibly empty) sequence of steps of [S] (§4.6). *)
-Definition is_normalizable (A : Type) (S : System A) (N : Net A) : Prop :=
-  exists N', normalizes_to A S N N'.
+    [N] by a (possibly empty) sequence of steps of [S] (§4.6). [Type]-sorted
+    (a sig carrying the witnessing normal form) because [normalizes_to] is
+    [Type]-sorted; a [Prop] existential cannot hold a [Type] component. *)
+Definition is_normalizable (A : Type) (S : System A) (N : Net A) : Type :=
+  { N' : Net A & normalizes_to A S N N' }.
 
 (** [is_strongly_normalizable A S N] holds when no infinite step-sequence
     starts from [N] — equivalently, every reduction sequence from [N] is
@@ -2871,9 +2890,7 @@ Lemma normalizes_to_of_nf (A : Type) (S : System A) (N : Net A)
       (Hnf : is_normal_form A (sys_arity S) N) :
   normalizes_to A S N N.
 Proof.
-  split.
-  - exact Hnf.
-  - exact (step_star_refl A S N).
+  exact (pair Hnf (step_star_refl A S N)).
 Qed.
 
 (** A normal form is normalizable (to itself). *)
@@ -2881,8 +2898,7 @@ Lemma is_normalizable_of_nf (A : Type) (S : System A) (N : Net A)
       (Hnf : is_normal_form A (sys_arity S) N) :
   is_normalizable A S N.
 Proof.
-  exists N.
-  exact (normalizes_to_of_nf A S N Hnf).
+  exact (existT (fun N' => normalizes_to A S N N') N (normalizes_to_of_nf A S N Hnf)).
 Qed.
 
 (**************************************************************************)
@@ -7234,3 +7250,571 @@ Proof.
                  Hrhs1 Hiface1 Hol1 Hol2 Hol3 Hol4 Hlen1_le)
                Hwf_scN12). }
 Qed.
+
+(**************************************************************************)
+(** ** Confluence (section 4.7) *)
+
+(** The [diamond] above concludes a [step_star_iso] join (a star sequence on
+    each side). The spec's 4.7 diamond property is stronger: the join is
+    reached in AT MOST ONE step on each side (zero steps when the two fired
+    pairs coincide, one step when they are disjoint). That one-step strength
+    is exactly what the Church-Rosser argument needs: in the inductive case
+    of the step-vs-[step_star] peak lemma, the diamond must yield a single
+    [step] (not a star) so that the induction hypothesis applies.
+
+    [atmost1_step_iso A S N M] holds when [M] is reachable from [N] by at
+    most one step of [S], up to renaming: either [N] is isomorphic to [M]
+    (zero steps) or there is a net [M'] with [N -> M'] and [M'] isomorphic to
+    [M] (one step). [Type]-sorted (a [sum] of the two cases) so it can be
+    eliminated in a [Type] goal. Note [+] is [Nat.add] here ([nat_scope] is
+    open), so the sum is written with [sum] explicitly. *)
+Definition atmost1_step_iso (A : Type) (S : System A) (N M : Net A) : Type :=
+  sum (net_iso A (sys_arity S) N M)
+      { M' : Net A & step A S N M' * net_iso A (sys_arity S) M' M }.
+
+(** A star sequence starting from a well-formed net ends in a well-formed net:
+    each step preserves well-formedness ([step_pres_wf]), and the empty
+    sequence ends where it started. *)
+Lemma step_star_pres_wf (A : Type) (S : System A) (N M : Net A)
+      (HwfN : well_formed A (sys_arity S) N)
+      (Hstar : step_star A S N M) :
+  well_formed A (sys_arity S) M.
+Proof.
+  induction Hstar as [N | N N' M Hstep Hstar' IH].
+  - subst. exact HwfN.
+  - exact (IH (step_pres_wf A S N N' Hstep)).
+Qed.
+
+(** A star sequence is compatible with isomorphism of its SOURCE, up to
+    isomorphism of the target: if [M1] is isomorphic to [M] and [M] star-
+    reaches [M2], then [M1] star-reaches some [M3] isomorphic to [M2]. The
+    target is matched up to [net_iso] (not literally [M2]) because the concrete
+    [step_star] is not closed under isomorphism in the zero-step case: the
+    empty sequence from [M] to [M] transports to the empty sequence from [M1]
+    to [M1], which is isomorphic to [M], not equal to it.
+
+    The proof transports the star one step at a time across the source iso via
+    [step_iso_compat_l], which re-fires the image of the active pair and lands
+    on the SAME target, so only the base (empty) case needs the up-to-iso
+    slack. *)
+Lemma star_iso_source (A : Type) (S : System A) (M1 M M2 : Net A)
+      (Hiso : net_iso A (sys_arity S) M1 M)
+      (HwfM1 : well_formed A (sys_arity S) M1)
+      (Hstar : step_star A S M M2) :
+  { M3 : Net A & step_star A S M1 M3 * net_iso A (sys_arity S) M3 M2 }.
+Proof.
+  set (Ar := sys_arity S).
+  induction Hstar as [M | M M' M2 Hstep Hstar'].
+  - exists M1.
+    exact (pair (step_star_refl A S M1) Hiso).
+  - assert (Hstep' : step A S M1 M').
+    { exact (step_iso_compat_l A S M1 M M' Hiso HwfM1 Hstep). }
+    exists M2.
+    exact (pair (step_star_cons A S M1 M' M2 Hstep' Hstar')
+           (net_iso_reflexive A Ar M2)).
+Qed.
+
+(** [step_star_iso] is transitive: a star-up-to-iso from [X] to [M] followed
+    by a star-up-to-iso from [M] to [K] is a star-up-to-iso from [X] to [K].
+    The source [X] must be well-formed so the intermediate star can be
+    transported across the source iso ([star_iso_source]). *)
+Lemma step_star_iso_trans (A : Type) (S : System A) (X M K : Net A)
+      (HwfX : well_formed A (sys_arity S) X)
+      (H1 : step_star_iso A S X M)
+      (H2 : step_star_iso A S M K) :
+  step_star_iso A S X K.
+Proof.
+  set (Ar := sys_arity S).
+  destruct H1 as [M1 [Hstar1 Hiso1]].
+  destruct H2 as [M2 [Hstar2 Hiso2]].
+  assert (HwfM1 : well_formed A Ar M1).
+  { exact (step_star_pres_wf A S X M1 HwfX Hstar1). }
+  destruct (star_iso_source A S M1 M M2 Hiso1 HwfM1 Hstar2) as [M3 [Hstar3 Hiso3]].
+  exists M3.
+  split.
+  - exact (step_star_trans A S X M1 M3 Hstar1 Hstar3).
+  - exact (net_iso_transitive A Ar M3 M2 K Hiso3 Hiso2).
+Qed.
+
+(** An at-most-one-step-up-to-iso reachability is in particular a star-up-to-
+    iso reachability: the zero-step case is the empty star, the one-step case
+    is a one-element star. *)
+Lemma atmost1_to_star_iso (A : Type) (S : System A) (N M : Net A)
+      (H : atmost1_step_iso A S N M) :
+  step_star_iso A S N M.
+Proof.
+  set (Ar := sys_arity S).
+  destruct H as [Hiso | Hsig].
+  - exists N.
+    exact (pair (step_star_refl A S N) Hiso).
+  - destruct Hsig as [M' [Hstep Hiso]].
+    exists M'.
+    exact (pair (step_star_step A S N M' Hstep) Hiso).
+Qed.
+
+(** The [diamond] restated with the spec's 4.7 one-step strength: the join [M]
+    is reached from [N1] and [N2] in AT MOST ONE step each (up to renaming),
+    not by an arbitrary star sequence. This is the form the Church-Rosser
+    argument needs (see [atmost1_step_iso]). The proof is the same case
+    analysis as [diamond]; only the final packaging differs: the same-pair
+    case is a zero-step iso, the disjoint case is a single step on each side
+    (the two double splices being isomorphic by [step_commuting]). *)
+Theorem diamond_atmost1 (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+  forall N N1 N2, step A S N N1 -> step A S N N2 ->
+    { M : Net A & atmost1_step_iso A S N1 M * atmost1_step_iso A S N2 M }.
+Proof.
+  intros N N1 N2 Hs1 Hs2.
+  set (Ar := sys_arity S).
+  destruct Hs1 as [N N1 a b α β r1 Hwf Hap_ab Hla Hlb Hr1 Hlhs1 Hiso1].
+  destruct Hs2 as [N N2 c d γ δ r2 _ Hap_cd Hlc Hld Hr2 Hlhs2 Hiso2].
+  (* The destructs consumed the original step hypotheses; rebuild them from
+     the extracted data (both steps fire on the same [N], so [Hwf] serves
+     both). Needed by [step_pres_wf] in the disjoint case. *)
+  assert (Hs1 : step A S N N1).
+  { exact (step_intro A S N N1 a b α β r1 Hwf Hap_ab Hla Hlb Hr1 Hlhs1 Hiso1). }
+  assert (Hs2 : step A S N N2).
+  { exact (step_intro A S N N2 c d γ δ r2 Hwf Hap_cd Hlc Hld Hr2 Hlhs2 Hiso2). }
+  set (R1 := raw_splice A Ar N a b r1).
+  destruct (active_pairs_trichotomy A Ar N Hwf a b c d Hap_ab Hap_cd)
+    as [Hac Hbd|Had Hbc|Hdisj].
+  (* ==================== Case 1: same pair (a = c, b = d) ==================== *)
+  - { subst c. subst d.
+    assert (Hαγ : α = γ).
+    { rewrite Hla in Hlc. injection Hlc as Hαγ'. exact Hαγ'. }
+    subst γ.
+    assert (Hδβ : β = δ).
+    { rewrite Hlb in Hld. injection Hld as Hδβ'. exact Hδβ'. }
+    subst δ.
+    rewrite Hr1 in Hr2.
+    injection Hr2 as Hr12.
+    subst r2.
+    (* Now R1 = R2; both N1 and N2 are isomorphic to R1. *)
+    assert (Hrhs1 : well_formed A Ar (ru_rhs r1)).
+    { exact (sys_valid_wf A S α β r1 Hr1). }
+    assert (Hiface1 : ru_iface r1 = interface A Ar (ru_rhs r1)).
+    { exact (sys_valid_iface A S α β r1 Hr1). }
+    assert (Hlen1 := sys_valid_len A S α β r1 Hr1).
+    rewrite !Hlhs1 in Hlen1. simpl in Hlen1.
+    assert (Hwf_R1 : well_formed A Ar R1).
+    { exact (raw_splice_wf A Ar N a b r1 α β Hla Hlb Hlhs1 Hwf Hap_ab Hrhs1 Hiface1 Hlen1). }
+    exists R1.
+    split.
+    - exact (inl (net_iso_symmetric A Ar R1 N1 Hiso1 Hwf_R1)).
+    - exact (inl (net_iso_symmetric A Ar R1 N2 Hiso2 Hwf_R1)). }
+  (* ==================== Case 2: swapped pair (a = d, b = c) ==================== *)
+  - { subst d. subst c.
+    assert (Hβγ : β = γ).
+    { rewrite Hlb in Hlc. injection Hlc as Hβγ'. exact Hβγ'. }
+    subst γ.
+    assert (Hαδ : α = δ).
+    { rewrite Hla in Hld. injection Hld as Hαδ'. exact Hαδ'. }
+    subst δ.
+    (* Hr2 : sys_rules S β α = Some r2; by symmetry of the rule table,
+       sys_rules S β α = sys_rules S α β, so r2 = r1. *)
+    rewrite (sys_sym S β α) in Hr2.
+    rewrite Hr1 in Hr2.
+    injection Hr2 as Hr12.
+    subst r2.
+    (* Hlhs2 : ru_lhs r1 = (β, α); with Hlhs1 : ru_lhs r1 = (α, β),
+       this forces α = β, contradicting distinct_lhs. *)
+    rewrite Hlhs1 in Hlhs2.
+    injection Hlhs2 as Hαβ Hβα.
+    exfalso.
+    apply (Hdl α β r1 Hr1).
+    rewrite Hlhs1. simpl.
+    exact Hαβ. }
+  (* ==================== Case 3: disjoint pairs ==================== *)
+  - { (* Fire r1 then r2 (or r2 then r1); the two double splices are
+         isomorphic by step_commuting. *)
+    set (scN1 := sc_N1 A Ar N a b r1).
+    set (scN2 := sc_N2 A Ar N c d r2).
+    set (scN12 := sc_N12 A Ar N a b c d r1 r2).
+    set (scN21 := sc_N21 A Ar N a b c d r1 r2).
+    set (c' := @ni_map A Ar scN1 N1 Hiso1 c).
+    set (d' := @ni_map A Ar scN1 N1 Hiso1 d).
+    set (a' := @ni_map A Ar scN2 N2 Hiso2 a).
+    set (b' := @ni_map A Ar scN2 N2 Hiso2 b).
+    (* System validity of the two rules. *)
+    assert (Hrhs1 : well_formed A Ar (ru_rhs r1)).
+    { exact (sys_valid_wf A S α β r1 Hr1). }
+    assert (Hiface1 : ru_iface r1 = interface A Ar (ru_rhs r1)).
+    { exact (sys_valid_iface A S α β r1 Hr1). }
+    assert (Hlen1_eq := sys_valid_len A S α β r1 Hr1).
+    rewrite !Hlhs1 in Hlen1_eq. simpl in Hlen1_eq.
+    (* Hlen1_eq : length (ru_iface r1) = Ar α + Ar β. *)
+    assert (Hlen1_fst : length (ru_iface r1) = Ar (fst (ru_lhs r1)) + Ar (snd (ru_lhs r1))).
+    { exact (sys_valid_len A S α β r1 Hr1). }
+    assert (Hlen1_le : Ar (fst (ru_lhs r1)) + Ar (snd (ru_lhs r1)) <= length (ru_iface r1)).
+    { rewrite Hlen1_fst. lia. }
+    assert (Hrhs2 : well_formed A Ar (ru_rhs r2)).
+    { exact (sys_valid_wf A S γ δ r2 Hr2). }
+    assert (Hiface2 : ru_iface r2 = interface A Ar (ru_rhs r2)).
+    { exact (sys_valid_iface A S γ δ r2 Hr2). }
+    assert (Hlen2_fst : length (ru_iface r2) = Ar (fst (ru_lhs r2)) + Ar (snd (ru_lhs r2))).
+    { exact (sys_valid_len A S γ δ r2 Hr2). }
+    (* The LHS components of each rule. *)
+    assert (Hf1 : fst (ru_lhs r1) = α). { rewrite Hlhs1. reflexivity. }
+    assert (Hs1l : snd (ru_lhs r1) = β). { rewrite Hlhs1. reflexivity. }
+    assert (Hf2 : fst (ru_lhs r2) = γ). { rewrite Hlhs2. reflexivity. }
+    assert (Hs2l : snd (ru_lhs r2) = δ). { rewrite Hlhs2. reflexivity. }
+    assert (Hlen2_γδ : length (ru_iface r2) = Ar γ + Ar δ).
+    { rewrite Hf2, Hs2l in Hlen2_fst. exact Hlen2_fst. }
+    (* Orientation premises for step_commuting. *)
+    assert (Hol1 : agent_label A N a = Some (fst (ru_lhs r1))).
+    { rewrite <- Hf1 in Hla. exact Hla. }
+    assert (Hol2 : agent_label A N b = Some (snd (ru_lhs r1))).
+    { rewrite <- Hs1l in Hlb. exact Hlb. }
+    assert (Hol3 : agent_label A N c = Some (fst (ru_lhs r2))).
+    { rewrite <- Hf2 in Hlc. exact Hlc. }
+    assert (Hol4 : agent_label A N d = Some (snd (ru_lhs r2))).
+    { rewrite <- Hs2l in Hld. exact Hld. }
+    (* The single splices are well-formed. *)
+    assert (Hwf_scN1 : well_formed A Ar scN1).
+    { exact (raw_splice_wf A Ar N a b r1 α β Hla Hlb Hlhs1 Hwf Hap_ab Hrhs1 Hiface1 Hlen1_eq). }
+    assert (Hwf_scN2 : well_formed A Ar scN2).
+    { exact (raw_splice_wf A Ar N c d r2 γ δ Hlc Hld Hlhs2 Hwf Hap_cd Hrhs2 Hiface2 Hlen2_γδ). }
+    (* The four agents of the two pairs, and the disjointness inequalities. *)
+    assert (Ha : has_agent A N a).
+    { change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+      exact (proj1 (proj2 Hap_ab)). }
+    assert (Hb : has_agent A N b).
+    { change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+      exact (proj1 (proj2 (proj2 Hap_ab))). }
+    assert (Hc : has_agent A N c).
+    { change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+      exact (proj1 (proj2 Hap_cd)). }
+    assert (Hd : has_agent A N d).
+    { change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+      exact (proj1 (proj2 (proj2 Hap_cd))). }
+    assert (Hac : a <> c). { exact (proj1 Hdisj). }
+    assert (Had : a <> d). { exact (proj1 (proj2 Hdisj)). }
+    assert (Hbc : b <> c). { exact (proj1 (proj2 (proj2 Hdisj))). }
+    assert (Hbd : b <> d). { exact (proj2 (proj2 (proj2 Hdisj))). }
+    assert (Hca : c <> a). { intro H. apply Hac. symmetry. exact H. }
+    assert (Hcb : c <> b). { intro H. apply Hbc. symmetry. exact H. }
+    assert (Hda : d <> a). { intro H. apply Had. symmetry. exact H. }
+    assert (Hdb : d <> b). { intro H. apply Hbd. symmetry. exact H. }
+    (* The flipped disjointness, for firing (c, d) with survivors (a, b). *)
+    assert (Hdisj2 : c <> a /\ c <> b /\ d <> a /\ d <> b).
+    { split; [exact Hca | split; [exact Hcb | split; [exact Hda | exact Hdb]]]. }
+    (* The surviving agents in the single splices. *)
+    assert (Hc_scN1 : has_agent A scN1 c).
+    { exact (raw_splice_pres_agent A Ar N a b c r1 Hc Hca Hcb). }
+    assert (Hd_scN1 : has_agent A scN1 d).
+    { exact (raw_splice_pres_agent A Ar N a b d r1 Hd Hda Hdb). }
+    assert (Ha_scN2 : has_agent A scN2 a).
+    { exact (raw_splice_pres_agent A Ar N c d a r2 Ha Hac Had). }
+    assert (Hb_scN2 : has_agent A scN2 b).
+    { exact (raw_splice_pres_agent A Ar N c d b r2 Hb Hbc Hbd). }
+    (* The surviving labels in the single splices. *)
+    assert (Hlc_scN1 : agent_label A scN1 c = Some (fst (ru_lhs r2))).
+    { assert (Heq : agent_label A scN1 c = agent_label A N c).
+      { exact (raw_splice_pres_label A Ar N Hwf a b c r1 Hc Hca Hcb). }
+      rewrite Heq, Hlc.
+      rewrite <- Hf2.
+      reflexivity. }
+    assert (Hld_scN1 : agent_label A scN1 d = Some (snd (ru_lhs r2))).
+    { assert (Heq : agent_label A scN1 d = agent_label A N d).
+      { exact (raw_splice_pres_label A Ar N Hwf a b d r1 Hd Hda Hdb). }
+      rewrite Heq, Hld.
+      rewrite <- Hs2l.
+      reflexivity. }
+    assert (Hla_scN2 : agent_label A scN2 a = Some (fst (ru_lhs r1))).
+    { assert (Heq : agent_label A scN2 a = agent_label A N a).
+      { exact (raw_splice_pres_label A Ar N Hwf c d a r2 Ha Hac Had). }
+      rewrite Heq, Hla.
+      rewrite <- Hf1.
+      reflexivity. }
+    assert (Hlb_scN2 : agent_label A scN2 b = Some (snd (ru_lhs r1))).
+    { assert (Heq : agent_label A scN2 b = agent_label A N b).
+      { exact (raw_splice_pres_label A Ar N Hwf c d b r2 Hb Hbc Hbd). }
+      rewrite Heq, Hlb.
+      rewrite <- Hs1l.
+      reflexivity. }
+    (* The other pair is still active in each single splice. *)
+    assert (Hap_scN1 : is_active_pair A Ar scN1 c d).
+    { exact (raw_splice_pres_pair A Ar N a b c d r1 Hwf Hap_ab Hap_cd Hdisj). }
+    assert (Hap_scN2 : is_active_pair A Ar scN2 a b).
+    { exact (raw_splice_pres_pair A Ar N c d a b r2 Hwf Hap_cd Hap_ab Hdisj2). }
+    (* Reflexive LHS facts. *)
+    assert (Hlhs1' : ru_lhs r1 = (fst (ru_lhs r1), snd (ru_lhs r1))).
+    { rewrite Hf1, Hs1l, Hlhs1. reflexivity. }
+    assert (Hlhs2' : ru_lhs r2 = (fst (ru_lhs r2), snd (ru_lhs r2))).
+    { rewrite Hf2, Hs2l, Hlhs2. reflexivity. }
+    (* The double splices are well-formed. *)
+    assert (Hwf_scN12 : well_formed A Ar scN12).
+    { exact (raw_splice_wf A Ar scN1 c d r2 (fst (ru_lhs r2)) (snd (ru_lhs r2))
+             Hlc_scN1 Hld_scN1 Hlhs2' Hwf_scN1 Hap_scN1 Hrhs2 Hiface2 Hlen2_fst). }
+    assert (Hwf_scN21 : well_formed A Ar scN21).
+    { exact (raw_splice_wf A Ar scN2 a b r1 (fst (ru_lhs r1)) (snd (ru_lhs r1))
+             Hla_scN2 Hlb_scN2 Hlhs1' Hwf_scN2 Hap_scN2 Hrhs1 Hiface1 Hlen1_fst). }
+    (* ---- The step N1 -> scN12 (fire r2 on the image of c, d in N1) ---- *)
+    assert (Hap_N1 : is_active_pair A Ar N1 c' d').
+    { exact (step_preserves_pair A S N N1 a b c d r1 Hiso1 Hwf Hap_ab Hap_cd Hdisj). }
+    assert (Hwf_N1 : well_formed A Ar N1).
+    { exact (step_pres_wf A S N N1 Hs1). }
+    assert (Hc_N1 : has_agent A N1 c').
+    { unfold c'.
+      exact (net_iso_agent_fwd A Ar scN1 N1 Hiso1 c Hc_scN1). }
+    assert (Hd_N1 : has_agent A N1 d').
+    { unfold d'.
+      exact (net_iso_agent_fwd A Ar scN1 N1 Hiso1 d Hd_scN1). }
+    assert (Hlc_N1 : agent_label A N1 c' = Some (fst (ru_lhs r2))).
+    { unfold c'.
+      assert (Heq : agent_label A N1 (@ni_map A Ar scN1 N1 Hiso1 c) = agent_label A scN1 c).
+      { exact (net_iso_label A Ar scN1 N1 Hiso1 Hwf_scN1 c Hc_scN1). }
+      rewrite Heq.
+      exact Hlc_scN1. }
+    assert (Hld_N1 : agent_label A N1 d' = Some (snd (ru_lhs r2))).
+    { unfold d'.
+      assert (Heq : agent_label A N1 (@ni_map A Ar scN1 N1 Hiso1 d) = agent_label A scN1 d).
+      { exact (net_iso_label A Ar scN1 N1 Hiso1 Hwf_scN1 d Hd_scN1). }
+      rewrite Heq.
+      exact Hld_scN1. }
+    assert (Hr2' : sys_rules S (fst (ru_lhs r2)) (snd (ru_lhs r2)) = Some r2).
+    { rewrite <- Hf2, <- Hs2l in Hr2. exact Hr2. }
+    assert (Hsp : net_iso A Ar scN12 (raw_splice A Ar N1 c' d' r2)).
+    { exact (raw_splice_iso_compat A Ar scN1 N1 Hiso1 c d r2 Hc_scN1 Hd_scN1 Hwf_scN1). }
+    assert (Hsp' : net_iso A Ar (raw_splice A Ar N1 c' d' r2) scN12).
+    { exact (net_iso_symmetric A Ar scN12 (raw_splice A Ar N1 c' d' r2) Hsp Hwf_scN12). }
+    assert (Hstep_N1 : step A S N1 scN12).
+    { refine (step_intro A S N1 scN12 c' d' (fst (ru_lhs r2)) (snd (ru_lhs r2)) r2
+             Hwf_N1 Hap_N1 Hlc_N1 Hld_N1 Hr2' Hlhs2' Hsp'). }
+    (* ---- The step N2 -> scN21 (fire r1 on the image of a, b in N2) ---- *)
+    assert (Hap_N2 : is_active_pair A Ar N2 a' b').
+    { exact (step_preserves_pair A S N N2 c d a b r2 Hiso2 Hwf Hap_cd Hap_ab Hdisj2). }
+    assert (Hwf_N2 : well_formed A Ar N2).
+    { exact (step_pres_wf A S N N2 Hs2). }
+    assert (Ha_N2 : has_agent A N2 a').
+    { unfold a'.
+      exact (net_iso_agent_fwd A Ar scN2 N2 Hiso2 a Ha_scN2). }
+    assert (Hb_N2 : has_agent A N2 b').
+    { unfold b'.
+      exact (net_iso_agent_fwd A Ar scN2 N2 Hiso2 b Hb_scN2). }
+    assert (Hla_N2 : agent_label A N2 a' = Some (fst (ru_lhs r1))).
+    { unfold a'.
+      assert (Heq : agent_label A N2 (@ni_map A Ar scN2 N2 Hiso2 a) = agent_label A scN2 a).
+      { exact (net_iso_label A Ar scN2 N2 Hiso2 Hwf_scN2 a Ha_scN2). }
+      rewrite Heq.
+      exact Hla_scN2. }
+    assert (Hlb_N2 : agent_label A N2 b' = Some (snd (ru_lhs r1))).
+    { unfold b'.
+      assert (Heq : agent_label A N2 (@ni_map A Ar scN2 N2 Hiso2 b) = agent_label A scN2 b).
+      { exact (net_iso_label A Ar scN2 N2 Hiso2 Hwf_scN2 b Hb_scN2). }
+      rewrite Heq.
+      exact Hlb_scN2. }
+    assert (Hr1' : sys_rules S (fst (ru_lhs r1)) (snd (ru_lhs r1)) = Some r1).
+    { rewrite <- Hf1, <- Hs1l in Hr1. exact Hr1. }
+    assert (Hsp2 : net_iso A Ar scN21 (raw_splice A Ar N2 a' b' r1)).
+    { exact (raw_splice_iso_compat A Ar scN2 N2 Hiso2 a b r1 Ha_scN2 Hb_scN2 Hwf_scN2). }
+    assert (Hsp2' : net_iso A Ar (raw_splice A Ar N2 a' b' r1) scN21).
+    { exact (net_iso_symmetric A Ar scN21 (raw_splice A Ar N2 a' b' r1) Hsp2 Hwf_scN21). }
+    assert (Hstep_N2 : step A S N2 scN21).
+    { refine (step_intro A S N2 scN21 a' b' (fst (ru_lhs r1)) (snd (ru_lhs r1)) r1
+             Hwf_N2 Hap_N2 Hla_N2 Hlb_N2 Hr1' Hlhs1' Hsp2'). }
+    (* ---- The diamond: M = scN12; N2 reaches it via scN21 ≈ scN12 ---- *)
+    exists scN12.
+    split.
+    - exact (inr (existT (fun M' : Net A => prod (step A S N1 M') (net_iso A Ar M' scN12))
+             scN12 (pair Hstep_N1 (net_iso_reflexive A Ar scN12)))).
+    - exact (inr (existT (fun M' : Net A => prod (step A S N2 M') (net_iso A Ar M' scN12))
+             scN21 (pair Hstep_N2 (net_iso_symmetric A Ar scN12 scN21
+               (step_commuting A Ar N a b c d r1 r2 Hwf Hap_ab Hap_cd Hdisj
+                 Hrhs1 Hiface1 Hol1 Hol2 Hol3 Hol4 Hlen1_le)
+               Hwf_scN12)))). }
+Qed.
+
+(** A concrete star sequence is in particular a star-up-to-iso sequence
+    (matched by the identity renaming). *)
+Lemma star_to_star_iso (A : Type) (S : System A) (N M : Net A)
+      (Hstar : step_star A S N M) : step_star_iso A S N M.
+Proof.
+  exists M.
+  exact (pair Hstar (net_iso_reflexive A (sys_arity S) M)).
+Qed.
+
+(** An isomorphism is in particular a star-up-to-iso sequence (the empty star,
+    matched by the given renaming). *)
+Lemma iso_to_star_iso (A : Type) (S : System A) (N M : Net A)
+      (Hiso : net_iso A (sys_arity S) N M) : step_star_iso A S N M.
+Proof.
+  exists N.
+  exact (pair (step_star_refl A S N) Hiso).
+Qed.
+
+(** A single step and a star sequence from the same net are joinable, up to
+    renaming: if [N -> N1] and [N ->* N2], then some [M] is reachable (up to
+    renaming) from both [N1] and [N2]. This is the peak lemma the confluence
+    proof is built from. It is proved by induction on the star, using
+    [diamond_atmost1] (the one-step diamond) so that the diamond yields a
+    single [step] (or a mere iso) that the induction hypothesis can consume.
+
+    The star is introduced before the step: the induction hypothesis must be
+    polymorphic in the step's target, which requires the step to be a
+    hypothesis at the point of the induction. *)
+Lemma step_star_peak (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+  forall N N2, step_star A S N N2 ->
+    forall N1, step A S N N1 ->
+      { M : Net A & step_star_iso A S N1 M * step_star_iso A S N2 M }.
+Proof.
+  set (Ar := sys_arity S).
+  intros N N2 Hstar.
+  induction Hstar as [N | N N' N2 Hstep Hstar IH].
+  - (* Base: N2 = N. Take M = N1. *)
+    intros N1 Hstep1.
+    exists N1.
+    split.
+    + exists N1.
+      exact (pair (step_star_refl A S N1) (net_iso_reflexive A Ar N1)).
+    + exists N1.
+      exact (pair (step_star_step A S N N1 Hstep1) (net_iso_reflexive A Ar N1)).
+  - { (* Inductive: N -> N' ->* N2. *)
+      intros N1 Hstep1.
+      destruct (diamond_atmost1 A S Hdl N N1 N' Hstep1 Hstep) as [M [Ham1 Ham2]].
+      destruct Ham2 as [Hiso | Hsig].
+      - { (* N' ~= M (the diamond's zero-step case). *)
+        assert (HwfN' : well_formed A Ar N').
+        { exact (step_pres_wf A S N N' Hstep). }
+        assert (HwfM : well_formed A Ar M).
+        { exact (net_iso_pres_wf A Ar N' M Hiso HwfN'). }
+        assert (HisoMN' : net_iso A Ar M N').
+        { exact (net_iso_symmetric A Ar N' M Hiso HwfN'). }
+        assert (HsMN2 : step_star_iso A S M N2).
+        { exact (step_star_iso_trans A S M N' N2 HwfM
+                 (iso_to_star_iso A S M N' HisoMN')
+                 (star_to_star_iso A S N' N2 Hstar)). }
+        assert (HsN1M : step_star_iso A S N1 M).
+        { exact (atmost1_to_star_iso A S N1 M Ham1). }
+        assert (HwfN1 : well_formed A Ar N1).
+        { exact (step_pres_wf A S N N1 Hstep1). }
+        assert (HsN1N2 : step_star_iso A S N1 N2).
+        { exact (step_star_iso_trans A S N1 M N2 HwfN1 HsN1M HsMN2). }
+        exists N2.
+        split.
+        + exact HsN1N2.
+        + exists N2.
+          exact (pair (step_star_refl A S N2) (net_iso_reflexive A Ar N2)). }
+      - { (* N' -> M'' ~= M (the diamond's one-step case). *)
+        destruct Hsig as [M'' [Hstep' Hiso]].
+        destruct (IH M'' Hstep') as [K [HK1 HK2]].
+        assert (HwfM'' : well_formed A Ar M'').
+        { exact (step_pres_wf A S N' M'' Hstep'). }
+        assert (HwfM : well_formed A Ar M).
+        { exact (net_iso_pres_wf A Ar M'' M Hiso HwfM''). }
+        assert (HisoMM'' : net_iso A Ar M M'').
+        { exact (net_iso_symmetric A Ar M'' M Hiso HwfM''). }
+        assert (HsMK : step_star_iso A S M K).
+        { exact (step_star_iso_trans A S M M'' K HwfM
+                 (iso_to_star_iso A S M M'' HisoMM'') HK1). }
+        assert (HsN1M : step_star_iso A S N1 M).
+        { exact (atmost1_to_star_iso A S N1 M Ham1). }
+        assert (HwfN1 : well_formed A Ar N1).
+        { exact (step_pres_wf A S N N1 Hstep1). }
+        assert (HsN1K : step_star_iso A S N1 K).
+        { exact (step_star_iso_trans A S N1 M K HwfN1 HsN1M HsMK). }
+        exists K.
+        split.
+        + exact HsN1K.
+        + exact HK2. } }
+Qed.
+
+(** Confluence (Church-Rosser), up to renaming: any two star sequences from
+    the same net reach nets that have a common reduct (up to renaming). This
+    is the 4.7 consequence of the diamond property.
+
+    The binders are ordered so that the star the proof inducts on (the second
+    one) is introduced first: the induction hypothesis must be polymorphic in
+    the target of the OTHER star, which requires that star to be a hypothesis
+    at the point of the induction (a binder in the goal cannot be). The
+    inductive case moves the first star across the first step of the second
+    via the step-vs-star peak lemma ([step_star_peak]) and then applies the
+    induction hypothesis. *)
+Theorem confluence (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+  forall N N2, step_star A S N N2 ->
+    forall N1, step_star A S N N1 ->
+      { M : Net A & step_star_iso A S N1 M * step_star_iso A S N2 M }.
+Proof.
+  set (Ar := sys_arity S).
+  intros N N2 Hstar2.
+  induction Hstar2 as [N | N N' N2 Hstep Hstar2 IH].
+  - (* Base: N2 = N. Take M = N1. *)
+    intros N1 Hstar1.
+    exists N1.
+    split.
+    + exists N1.
+      exact (pair (step_star_refl A S N1) (net_iso_reflexive A Ar N1)).
+    + exact (star_to_star_iso A S N N1 Hstar1).
+  - (* Inductive: N -> N' ->* N2. *)
+    intros N1 Hstar1.
+    destruct (step_star_peak A S Hdl N N1 Hstar1 N' Hstep) as [M [HM' HM1]].
+    destruct HM' as [M2 [HstarM2 Hiso2]].
+    destruct (IH M2 HstarM2) as [K [HK1 HK2]].
+    assert (HwfN : well_formed A Ar N).
+    { exact (step_pres_wf_source A S N N' Hstep). }
+    assert (HwfN1 : well_formed A Ar N1).
+    { exact (step_star_pres_wf A S N N1 HwfN Hstar1). }
+    assert (HwfM2 : well_formed A Ar M2).
+    { exact (step_star_pres_wf A S N' M2 (step_pres_wf A S N N' Hstep) HstarM2). }
+    assert (HisoMM2 : net_iso A Ar M M2).
+    { exact (net_iso_symmetric A Ar M2 M Hiso2 HwfM2). }
+    assert (HwfM : well_formed A Ar M).
+    { exact (net_iso_pres_wf A Ar M2 M Hiso2 HwfM2). }
+    assert (HsMK : step_star_iso A S M K).
+    { exact (step_star_iso_trans A S M M2 K HwfM
+               (iso_to_star_iso A S M M2 HisoMM2) HK1). }
+    assert (HsN1K : step_star_iso A S N1 K).
+    { exact (step_star_iso_trans A S N1 M K HwfN1 HM1 HsMK). }
+    exists K.
+    split.
+    + exact HsN1K.
+    + exact HK2.
+Qed.
+
+(** A star sequence out of a normal form is empty: a normal form has no
+    outgoing step ([nf_no_step]), so the only way to star-reach [M] from [N]
+    is the empty sequence, i.e. [M = N]. *)
+Lemma star_from_nf_is_refl (A : Type) (S : System A) (N M : Net A)
+      (Hnf : is_normal_form A (sys_arity S) N)
+      (Hstar : step_star A S N M) : M = N.
+Proof.
+  induction Hstar as [N | N N' M Hstep Hstar IH].
+  - subst. reflexivity.
+  - exfalso.
+    apply (nf_no_step A S N N' Hnf) in Hstep.
+    exact Hstep.
+Qed.
+
+(** Unique normal forms (4.7(2)): if [N] normalizes to two normal forms [N1]
+    and [N2], then [N1] and [N2] are isomorphic (equal up to renaming).
+    Confluence gives a common reduct [M] (up to renaming); a normal form has
+    no outgoing step, so the star from [N1] (resp. [N2]) to its witness is
+    empty, forcing the witness to be [N1] (resp. [N2]) itself. Hence [N1] and
+    [N2] are both isomorphic to [M], and therefore to each other.
+
+    The starting net [N] is assumed well-formed: composing the two isomorphisms
+    through [M] requires the symmetry of one of them, which in turn requires
+    well-formedness. *)
+Theorem nf_unique (A : Type) (S : System A) (Hdl : distinct_lhs A S)
+      (N : Net A) (HwfN : well_formed A (sys_arity S) N) :
+  forall N1 N2, step_star A S N N1 -> step_star A S N N2 ->
+    is_normal_form A (sys_arity S) N1 -> is_normal_form A (sys_arity S) N2 ->
+    net_iso A (sys_arity S) N1 N2.
+Proof.
+  set (Ar := sys_arity S).
+  intros N1 N2 Hstar1 Hstar2 Hnf1 Hnf2.
+  destruct (confluence A S Hdl N N2 Hstar2 N1 Hstar1) as [M [HM1 HM2]].
+  destruct HM1 as [M1 [Hstar1' Hiso1]].
+  destruct HM2 as [M2 [Hstar2' Hiso2]].
+  assert (HM1eq : M1 = N1).
+  { exact (star_from_nf_is_refl A S N1 M1 Hnf1 Hstar1'). }
+  subst M1.
+  assert (HM2eq : M2 = N2).
+  { exact (star_from_nf_is_refl A S N2 M2 Hnf2 Hstar2'). }
+  subst M2.
+  (* Hiso1 : net_iso N1 M, Hiso2 : net_iso N2 M. Compose through M. *)
+  assert (HwfN2 : well_formed A Ar N2).
+  { exact (step_star_pres_wf A S N N2 HwfN Hstar2). }
+  exact (net_iso_transitive A Ar N1 M N2 Hiso1
+         (net_iso_symmetric A Ar N2 M Hiso2 HwfN2)).
+Qed.
+
