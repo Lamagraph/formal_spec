@@ -41,6 +41,10 @@ subtask:
   partial/`Admitted`/`Abort`ed proof is left uncommitted.
 - Has a unique identifier (e.g., "S1", "S2") used in commit messages and plan
   tracking.
+- Has a **self-contained spec**: a fresh agent holding only the detailed plan
+  and prior subtask reports must be able to execute it — no unstated
+  assumptions from the planning session (subtasks are executed by fresh
+  subagents; see the `subtask-loop` skill).
 
 If a task is ambiguous or underspecified **during planning** (conflicting
 requirements, unclear scope, missing constraints), do not guess. Ask the user
