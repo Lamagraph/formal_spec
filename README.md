@@ -1,17 +1,9 @@
 # LamaGraph — Formal Specification
 
 A formal specification, developed in **Rocq** (the former Coq), of an
-**interaction-nets-based co-processor (accelerator) architecture**.
-
-The specification has two layers and the equivalence between them:
-
-- **The interaction-net model** — the abstract computational semantics
-  (agents, rules, nets, redexes, rewriting).
-- **The architecture** — the concrete co-processor (memory, control, datapath,
-  scheduling).
-
-The central goal is to prove that executing the architecture realizes the
-abstract interaction-net semantics.
+**interaction-nets-based co-processor (accelerator) architecture**. What is
+being specified — and why — is described in
+[`docs/design.md`](docs/design.md).
 
 ## Layout
 

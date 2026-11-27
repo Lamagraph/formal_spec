@@ -8,17 +8,23 @@ phase align to.
 ## What we are specifying
 
 A formal specification of an **interaction-nets-based co-processor
-(accelerator) architecture**. Two layers, and the relationship between them:
+(accelerator) architecture**. It has two top-level parts, and the
+relationship between them:
 
-1. **The interaction-net model** — the abstract computational semantics:
-   agents, rewrite rules, nets, redexes, and the rewriting relation. This is
-   the "meaning" the hardware must realize.
-2. **The architecture** — the concrete co-processor: memory organization,
-   control, datapath, and scheduling. This is the "implementation" we prove
-   correct.
+1. **The math** — the implementation-detail-free foundations the
+   specification and its proofs are built on: any abstract,
+   hardware-independent material the development needs. Today its core is the
+   formal interaction-net model (agents, rewrite rules, nets, redexes, the
+   rewriting relation) — the abstract semantics the hardware must realize —
+   but it is not limited to that.
+2. **The RTL-like model** — a cycle-accurate and cycle-precise model of the
+   concrete co-processor: memory organization, control, datapath, and
+   scheduling. These quality properties are proved in the spec, not assumed
+   (see the corresponding principle in `AGENTS.md`). This is the
+   "implementation" we prove correct.
 
-The central correctness goal is an **equivalence**: executing the architecture
-on a net yields the same observable result as applying the abstract
+The central correctness goal is an **equivalence**: executing the RTL-like
+model on a net yields the same observable result as applying the abstract
 interaction-net rewrite relation. Everything in this repo exists to state and
 prove that (and the lemmas that make it tractable).
 
