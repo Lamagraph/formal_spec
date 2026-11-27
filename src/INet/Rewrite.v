@@ -14,6 +14,7 @@ Require Import Stdlib.Arith.PeanoNat.
 Require Import Stdlib.Bool.Bool.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.Lists.Finite.
+Require Import Stdlib.Logic.Classical.
 Require Import Stdlib.Sorting.Permutation.
 Require Import Stdlib.micromega.Lia.
 Require Import Net.
@@ -2719,8 +2720,13 @@ Qed.
     plays the "first" role of the rule (see the orientation convention of
     [raw_splice]); [sys_valid_lhs] alone yields only the disjunction of the
     two orders. The final premise lets [N'] be any representative of the
-    isomorphism class of the raw splice; [step_iso_compat_r] exploits this. *)
-Inductive step (A : Type) (S : System A) : Net A -> Net A -> Prop :=
+    isomorphism class of the raw splice; [step_iso_compat_r] exploits this.
+
+    [step] is [Type]-sorted (not [Prop]) because its constructor carries the
+    computational [net_iso] witness and the fired [Rule]; this lets a proof
+    that packages such witnesses (e.g. the [Type]-sorted [step_star_iso] used
+    by the diamond) be built by destructing a [step]. *)
+Inductive step (A : Type) (S : System A) : Net A -> Net A -> Type :=
 step_intro : forall (N N' : Net A) (a b : nat) (α β : A) (r : Rule A),
   well_formed A (sys_arity S) N
   -> is_active_pair A (sys_arity S) N a b
@@ -2804,6 +2810,18 @@ Proof.
   { exact (step_star_cons A S N N' M'' Hstep0 (IH Hstep Hstep')). }
 Qed.
 
+(** [step_star_iso A S N1 N2] holds when [N2] is reachable from [N1] by a
+    finite (possibly empty) sequence of steps of [S], up to renaming: some
+    concrete net [M] with [N1 ->* M] is isomorphic to [N2]. This is the
+    reachability notion appropriate for the "nets up to renaming" model: the
+    concrete [step_star] is not closed under isomorphism of its target in the
+    zero-step case (see [step_star_step_iso]), so a diamond stated with
+    [step_star] is false when two steps fire the same pair and yield distinct
+    representatives of one isomorphism class. [step_star_iso] fixes this by
+    allowing the target to be matched up to [net_iso]. *)
+Definition step_star_iso (A : Type) (S : System A) (N1 N2 : Net A) : Type :=
+  { M : Net A & step_star A S N1 M * net_iso A (sys_arity S) M N2 }.
+
 (**************************************************************************)
 (** ** Normal forms and normalizability *)
 
@@ -2833,7 +2851,7 @@ Definition is_strongly_normalizable (A : Type) (S : System A) (N : Net A) : Prop
 (** A normal form has no outgoing step: no rule can fire on it. *)
 Lemma nf_no_step (A : Type) (S : System A) (N N' : Net A)
       (Hnf : is_normal_form A (sys_arity S) N) :
-  ~ step A S N N'.
+  step A S N N' -> False.
 Proof.
   intro Hstep.
   destruct Hstep as [N N' a b α β r Hwf Hap _ _ _ _ _].
@@ -5828,3 +5846,1391 @@ Section Commutation.
     mkNetIso (comm_map sc_M sc_M1 sc_M2) sc_ni_agents sc_ni_inj sc_ni_links.
 
   End Commutation.
+
+
+(**************************************************************************)
+(** ** Raw splice commutes with isomorphism (§4.7 setup) *)
+
+(** Splicing a rule at a pair of [Y] and at the corresponding pair of an
+    isomorphic net [X] yield isomorphic nets. This is the single-splice
+    counterpart of [step_commuting] and is what lets a [step] be lifted across
+    an isomorphism of its source (the "left" iso-compatibility of [step]).
+    The witnessing renaming is [ni_map H] on the surviving agents and a
+    [shift] on the freshened RHS block (which sits strictly above
+    [max_agent_id Y]). *)
+Section RawSpliceIso.
+  Variables (A : Type) (Ar : A -> nat) (Y X : Net A) (H : net_iso A Ar Y X)
+            (a b : nat) (r : Rule A)
+            (Ha : has_agent A Y a) (Hb : has_agent A Y b)
+            (HwfY : well_formed A Ar Y).
+
+  Local Definition M  := max_agent_id A Y.
+  Local Definition Mx := max_agent_id A X.
+
+  (* The witnessing renaming: [ni_map H] on ids at or below [M] (the surviving
+     agents of [Y]) and the [shift] from base [M] to base [Mx] above it (the
+     freshened RHS block). *)
+  Local Definition rs_map (x : nat) : nat :=
+    if M <? x then shift Mx M x else ni_map H x.
+
+  Local Definition rsY : Net A := raw_splice A Ar Y a b r.
+  Local Definition rsX : Net A := raw_splice A Ar X (@ni_map A Ar Y X H a) (@ni_map A Ar Y X H b) r.
+
+  (* The freshened block of [rsY] is carried positionally to that of [rsX]:
+     [rs_map (fresh_id A Y i) = fresh_id A X i]. *)
+  Local Lemma rs_map_fresh (i : nat) :
+    rs_map (fresh_id A Y i) = fresh_id A X i.
+  Proof.
+    unfold rs_map, fresh_id, M, Mx.
+    assert (Ht : (max_agent_id A Y <? max_agent_id A Y + 1 + i) = true).
+    { apply (proj2 (Nat.ltb_lt (max_agent_id A Y) (max_agent_id A Y + 1 + i))). lia. }
+    rewrite Ht.
+    unfold shift.
+    destruct (Nat.leb (max_agent_id A Y) (max_agent_id A X)) eqn:Hlm.
+    - apply (proj1 (Nat.leb_le (max_agent_id A Y) (max_agent_id A X))) in Hlm. lia.
+    - assert (Hnot : ~ (max_agent_id A Y <= max_agent_id A X)).
+      { intro Hle.
+        assert (Ht2 : (max_agent_id A Y <=? max_agent_id A X) = true).
+        { apply (proj2 (Nat.leb_le (max_agent_id A Y) (max_agent_id A X))). exact Hle. }
+        rewrite Ht2 in Hlm. discriminate Hlm. }
+      assert (Hmx : max_agent_id A X < max_agent_id A Y). { lia. }
+      lia.
+  Qed.
+
+  (* Filtering both sides of a permutation by the same boolean predicate
+     preserves the permutation. This is the workhorse for stripping the
+     images of [a] and [b] from the [ni_agents] permutation when passing to
+     the surviving-agent blocks. *)
+  Local Lemma perm_filter {T} (P : T -> bool) (L1 L2 : list T)
+        (Hperm : Permutation L1 L2) :
+    Permutation (filter P L1) (filter P L2).
+  Proof.
+    induction Hperm as [|x0 l l' Hpl IH | x0 y0 l | l0 l1 l2 Hpre1 IHpre1 Hpre2 IHpre2].
+    - simpl. apply Permutation_refl.
+    - simpl. destruct (P x0) eqn:Hpx.
+      + simpl. apply perm_skip. exact IH.
+      + simpl. exact IH.
+    - simpl. destruct (P x0) eqn:Hpx; destruct (P y0) eqn:HpY; simpl.
+      + exact (perm_swap x0 y0 (filter P l)).
+      + reflexivity.
+      + reflexivity.
+      + reflexivity.
+    - apply (Permutation_trans IHpre1 IHpre2).
+  Qed.
+
+  (* [map F] and [filter] commute when the source predicate [Q] and the
+     target predicate [P] agree on the image: [Q p = P (F p)] for every
+     [p] in [L]. No injectivity of [F] is needed. *)
+  Local Lemma map_filter_commute {T U} (F : T -> U) (Q : T -> bool) (P : U -> bool)
+        (L : list T) (Hqp : forall p, In p L -> Q p = P (F p)) :
+    map F (filter Q L) = filter P (map F L).
+  Proof.
+    induction L as [|h l IH].
+    - simpl. reflexivity.
+    - assert (IHl : map F (filter Q l) = filter P (map F l)).
+      { apply IH. intros p Hpin. exact (Hqp p (in_cons h p l Hpin)). }
+      simpl. destruct (Q h) eqn:Hqh.
+      + assert (Hpf : P (F h) = true).
+        { rewrite <- (Hqp h (in_eq h l)). exact Hqh. }
+        rewrite Hpf. simpl. rewrite IHl. reflexivity.
+      + assert (Hpf : P (F h) = false).
+        { rewrite <- (Hqp h (in_eq h l)). exact Hqh. }
+        rewrite Hpf. simpl. rewrite IHl. reflexivity.
+  Qed.
+
+  (* Pointwise-equal functions induce equal maps. *)
+  Local Lemma rs_map_ptw (f g : nat * A -> nat * A) (l : list (nat * A)) :
+    (forall x, In x l -> f x = g x) -> map f l = map g l.
+  Proof.
+    induction l as [|h t IH]; intros Hpt; simpl.
+    - reflexivity.
+    - assert (Hh : f h = g h). { exact (Hpt h (in_eq h t)). }
+      rewrite Hh.
+      assert (Ht : forall x, In x t -> f x = g x).
+      { intros x Hx. exact (Hpt x (in_cons h x t Hx)). }
+      rewrite (IH Ht). reflexivity.
+  Qed.
+
+  (* The iso map [F] on agents of [Y]; the "surviving in [X]" predicate [P]
+     (an agent of [X] survives the splice at [ma, mb] iff its id is neither
+     [ma] nor [mb]); the surviving-agent blocks [surv_Y]/[surv_X] and the
+     freshened RHS blocks [rhs_Y]/[rhs_X] of [rsY]/[rsX]; and [G], the
+     witnessing renaming applied to the agents of [rsY]. *)
+  Local Definition F (p : nat * A) : nat * A := (ni_map H (fst p), snd p).
+  Local Definition P (q : nat * A) : bool :=
+    negb (Nat.eqb (fst q) (ni_map H a)) && negb (Nat.eqb (fst q) (ni_map H b)).
+  Local Definition surv_Y : list (nat * A) :=
+    filter (fun p => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)) (nt_agents Y).
+  Local Definition surv_X : list (nat * A) := filter P (nt_agents X).
+  Local Definition rhs_Y : list (nat * A) :=
+    map (fun p => (fresh_id A Y (fst p), snd p)) (nt_agents (ru_rhs r)).
+  Local Definition rhs_X : list (nat * A) :=
+    map (fun p => (fresh_id A X (fst p), snd p)) (nt_agents (ru_rhs r)).
+  Local Definition G (p : nat * A) : nat * A := (rs_map (fst p), snd p).
+
+  (* [ni_map H] preserves the equality test against a fixed agent [c] of [Y]:
+     for an agent [p] of [Y], [fst p = c] iff [ni_map H (fst p) = ni_map H c]
+     (by injectivity of [ni_map H] on agents of [Y]). *)
+  Local Lemma ni_map_eqb (p : nat * A) (Hpin : In p (nt_agents Y)) (c : nat)
+        (Hc : has_agent A Y c) :
+    Nat.eqb (fst p) c = Nat.eqb (ni_map H (fst p)) (ni_map H c).
+  Proof.
+    destruct (Nat.eqb (fst p) c) eqn:H1;
+    destruct (Nat.eqb (ni_map H (fst p)) (ni_map H c)) eqn:H2;
+    [ (* H1=true, H2=true *)
+      reflexivity
+    | (* H1=true, H2=false: fst p = c but ni_map H (fst p) <> ni_map H c. *)
+      exfalso;
+      apply (proj1 (Nat.eqb_eq (fst p) c)) in H1;
+      rewrite H1 in H2;
+      assert (Ht : (ni_map H c =? ni_map H c) = true) by
+        (apply (proj2 (Nat.eqb_eq (ni_map H c) (ni_map H c))); reflexivity);
+      rewrite Ht in H2; discriminate H2
+    | (* H1=false, H2=true: ni_map H (fst p) = ni_map H c forces fst p = c. *)
+      exfalso;
+      assert (H2eq : ni_map H (fst p) = ni_map H c) by
+        (apply (proj1 (Nat.eqb_eq (ni_map H (fst p)) (ni_map H c))); exact H2);
+      assert (Hha : has_agent A Y (fst p)) by
+        (apply (proj2 (has_agent_In A Y (fst p)));
+         apply (In_map fst (nt_agents Y) p); exact Hpin);
+      assert (Hpa : fst p = c) by
+        (exact (ni_inj H (fst p) c Hha Hc H2eq));
+      assert (Ht : (fst p =? c) = true) by
+        (apply (proj2 (Nat.eqb_eq (fst p) c)); exact Hpa);
+      rewrite Ht in H1; discriminate H1
+    | (* H1=false, H2=false *)
+      reflexivity ].
+  Qed.
+
+  (* On the surviving agents of [Y], the witnessing map [G] coincides with the
+     iso map [F]: a survivor has id [<= M], so [rs_map] takes the [ni_map H]
+     branch. *)
+  Local Lemma G_eq_F_on_surv (p : nat * A) (Hpin : In p surv_Y) : G p = F p.
+  Proof.
+    unfold G, F, rs_map, M.
+    assert (Hle : fst p <= max_agent_id A Y).
+    { apply (list_max_upper_bound (map fst (nt_agents Y)) (fst p)).
+      apply (In_map fst (nt_agents Y) p).
+      exact (proj1 (proj1 (filter_In
+              (fun q : nat * A => negb (Nat.eqb (fst q) a) && negb (Nat.eqb (fst q) b))
+              p (nt_agents Y)) Hpin)). }
+    destruct (max_agent_id A Y <? fst p) eqn:Hltb.
+    - exfalso.
+      apply (proj1 (Nat.ltb_lt (max_agent_id A Y) (fst p))) in Hltb.
+      lia.
+    - simpl. reflexivity.
+  Qed.
+
+  (* [map F] over the surviving block of [Y] equals filtering the full image
+     [map F (nt_agents Y)] by [P]: the source predicate (id not a/b) and the
+     target predicate [P] (id not ma/mb) agree on the image by [ni_map_eqb]. *)
+  Local Lemma mapF_surv_eq : map F surv_Y = filter P (map F (nt_agents Y)).
+  Proof.
+    unfold surv_Y.
+    apply (map_filter_commute F
+           (fun p => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b))
+           P (nt_agents Y)).
+    intros p Hpin.
+    unfold P, F.
+    assert (Hqa : Nat.eqb (fst p) a = Nat.eqb (ni_map H (fst p)) (ni_map H a)).
+    { exact (ni_map_eqb p Hpin a Ha). }
+    assert (Hqb : Nat.eqb (fst p) b = Nat.eqb (ni_map H (fst p)) (ni_map H b)).
+    { exact (ni_map_eqb p Hpin b Hb). }
+    rewrite Hqa, Hqb.
+    reflexivity.
+  Qed.
+
+  (* The surviving block of [rsX] is exactly [filter P (nt_agents X)]. *)
+  Local Lemma survX_eq : surv_X = filter P (nt_agents X).
+  Proof.
+    unfold surv_X. reflexivity.
+  Qed.
+
+  (* The freshened RHS block of [rsY], under [G], is carried positionally to
+     that of [rsX] (by [rs_map_fresh]). *)
+  Local Lemma mapG_rhs_eq : map G rhs_Y = rhs_X.
+  Proof.
+    unfold rhs_Y, rhs_X, G.
+    rewrite map_map.
+    simpl.
+    apply rs_map_ptw. intros p Hpin.
+    f_equal.
+    exact (rs_map_fresh (fst p)).
+  Qed.
+
+  (* The surviving block of [rsY], under [G], is [map F surv_Y] (by
+     [G_eq_F_on_surv]). *)
+  Local Lemma mapG_surv_eq : map G surv_Y = map F surv_Y.
+  Proof.
+    apply (rs_map_ptw G F surv_Y). intros p Hpin. exact (G_eq_F_on_surv p Hpin).
+  Qed.
+
+  (* The [ni_agents] field: the agents of [rsY] under [G] are a permutation of
+     the agents of [rsX]. Both split into a surviving block (related by
+     [perm_filter] applied to [ni_agents H]) and a shared freshened RHS block. *)
+  Local Lemma rs_ni_agents :
+    Permutation (map G (nt_agents rsY)) (nt_agents rsX).
+  Proof.
+    change (Permutation (map G (surv_Y ++ rhs_Y)) (surv_X ++ rhs_X)).
+    rewrite map_app.
+    rewrite mapG_surv_eq.
+    rewrite mapG_rhs_eq.
+    apply Permutation_app.
+    - rewrite mapF_surv_eq.
+      rewrite survX_eq.
+      apply (perm_filter P _ _ (ni_agents H)).
+    - apply Permutation_refl.
+  Qed.
+
+  (* --- Facts about the agents of [rsY] and the action of [rs_map] --- *)
+
+  (* [rs_map] on an id [<= M] is [ni_map H]. *)
+  Local Lemma rs_map_surv (x : nat) (Hle : x <= M) : rs_map x = ni_map H x.
+  Proof.
+    unfold rs_map, M.
+    destruct (max_agent_id A Y <? x) eqn:Hltb.
+    - exfalso. apply (proj1 (Nat.ltb_lt (max_agent_id A Y) x)) in Hltb.
+      change (x <= max_agent_id A Y) in Hle. lia.
+    - simpl. reflexivity.
+  Qed.
+
+  (* [rs_map] on an id [> M] is the [shift] to base [Mx]. *)
+  Local Lemma rs_map_shift (x : nat) (Hgt : M < x) : rs_map x = shift Mx M x.
+  Proof.
+    unfold rs_map, M.
+    assert (Ht : (max_agent_id A Y <? x) = true).
+    { apply (proj2 (Nat.ltb_lt (max_agent_id A Y) x)).
+      change (max_agent_id A Y < x) in Hgt. exact Hgt. }
+    rewrite Ht. simpl. reflexivity.
+  Qed.
+
+  (* A surviving agent of [rsY] (id [<= M]) is an agent of [Y]. *)
+  Local Lemma rsY_surv_is_Y_agent (x : nat) (Hx : has_agent A rsY x) (Hle : x <= M) :
+    has_agent A Y x.
+  Proof.
+    apply (proj1 (has_agent_In A rsY x)) in Hx.
+    change (In x (map fst (surv_Y ++ rhs_Y))) in Hx.
+    rewrite map_app in Hx.
+    apply in_app_or in Hx as [Hs|Hr].
+    - apply (proj2 (has_agent_In A Y x)).
+      apply (proj1 (in_map_iff fst surv_Y x)) in Hs as [p [Hfp Hpin]].
+      rewrite <- Hfp.
+      apply (In_map fst (nt_agents Y) p).
+      apply (proj1 (filter_In
+               (fun q : nat * A => negb (Nat.eqb (fst q) a) && negb (Nat.eqb (fst q) b))
+               p (nt_agents Y))).
+      exact Hpin.
+    - exfalso.
+      change (In x (map fst rhs_Y)) in Hr.
+      unfold rhs_Y in Hr.
+      rewrite map_map in Hr. simpl in Hr.
+      apply (proj1 (in_map_iff (fun p : nat * A => fresh_id A Y (fst p))
+                                (nt_agents (ru_rhs r)) x)) in Hr as [p0 [Hfp Hpin]].
+      rewrite <- Hfp in Hle.
+      unfold fresh_id, M in Hle.
+      lia.
+  Qed.
+
+  (* An agent of [rsY] with id [> M] is a freshened RHS id. *)
+  Local Lemma rsY_rhs_form (x : nat) (Hx : has_agent A rsY x) (Hgt : M < x) :
+    exists i, x = fresh_id A Y i.
+  Proof.
+    apply (proj1 (has_agent_In A rsY x)) in Hx.
+    change (In x (map fst (surv_Y ++ rhs_Y))) in Hx.
+    rewrite map_app in Hx.
+    apply in_app_or in Hx as [Hs|Hr].
+    - exfalso.
+      apply (proj1 (in_map_iff fst surv_Y x)) in Hs as [p [Hfp Hpin]].
+      assert (Hle : fst p <= M).
+      { apply (list_max_upper_bound (map fst (nt_agents Y)) (fst p)).
+        apply (In_map fst (nt_agents Y) p).
+        apply (proj1 (filter_In
+               (fun q : nat * A => negb (Nat.eqb (fst q) a) && negb (Nat.eqb (fst q) b))
+               p (nt_agents Y))).
+        exact Hpin. }
+      rewrite Hfp in Hle. lia.
+    - change (In x (map fst rhs_Y)) in Hr.
+      unfold rhs_Y in Hr.
+      rewrite map_map in Hr. simpl in Hr.
+      apply (proj1 (in_map_iff (fun p : nat * A => fresh_id A Y (fst p))
+                                (nt_agents (ru_rhs r)) x)) in Hr as [p0 [Hfp Hpin]].
+      exists (fst p0). symmetry. exact Hfp.
+  Qed.
+
+  (* [ni_map H] of an agent of [Y] is an agent of [X], hence [<= Mx]. *)
+  Local Lemma ni_map_bound (x : nat) (Hx : has_agent A Y x) : ni_map H x <= Mx.
+  Proof.
+    apply (net_iso_agent_fwd A Ar Y X H x) in Hx.
+    apply (proj1 (has_agent_In A X (ni_map H x))) in Hx.
+    apply (list_max_upper_bound (map fst (nt_agents X)) (ni_map H x)).
+    exact Hx.
+  Qed.
+
+  (* [(n <=? m) = false] means [m < n]. *)
+  Local Lemma leb_false_to_lt (n m : nat) (Hf : (n <=? m) = false) : m < n.
+  Proof.
+    assert (Hnot : ~ (n <= m)).
+    { intro Hle.
+      assert (Ht : (n <=? m) = true). { apply (proj2 (Nat.leb_le n m)). exact Hle. }
+      rewrite Ht in Hf. discriminate Hf. }
+    lia.
+  Qed.
+
+  (* The [shift] carries a freshened RHS id of [Y] to the corresponding one of
+     [X]: [shift Mx M (fresh_id A Y i) = fresh_id A X i]. *)
+  Local Lemma shift_fresh (i : nat) : shift Mx M (fresh_id A Y i) = fresh_id A X i.
+  Proof.
+    assert (Hgt : M < fresh_id A Y i). { unfold fresh_id, M. lia. }
+    rewrite <- (rs_map_shift (fresh_id A Y i) Hgt).
+    exact (rs_map_fresh i).
+  Qed.
+
+  (* The [ni_inj] field: [rs_map] is injective on the agents of [rsY]. The
+     agents split into survivors (ids [<= M], carried by [ni_map H], injective
+     by [ni_inj H]) and the freshened RHS block (ids [> M], carried by the
+     [shift], which is a translation and hence injective); the two image ranges
+     are disjoint (survivors land [<= Mx], the RHS block lands [> Mx]). *)
+  Local Lemma rs_ni_inj :
+    forall a1 a2, has_agent A rsY a1 -> has_agent A rsY a2
+      -> rs_map a1 = rs_map a2 -> a1 = a2.
+  Proof.
+    intros a1 a2 Ha1 Ha2 Heq.
+    destruct (Nat.leb a1 M) eqn:H1; destruct (Nat.leb a2 M) eqn:H2.
+    - (* a1 <= M, a2 <= M: both survivors. *)
+      apply (proj1 (Nat.leb_le a1 M)) in H1.
+      apply (proj1 (Nat.leb_le a2 M)) in H2.
+      assert (Hya1 : has_agent A Y a1). { exact (rsY_surv_is_Y_agent a1 Ha1 H1). }
+      assert (Hya2 : has_agent A Y a2). { exact (rsY_surv_is_Y_agent a2 Ha2 H2). }
+      rewrite (rs_map_surv a1 H1), (rs_map_surv a2 H2) in Heq.
+      exact (ni_inj H a1 a2 Hya1 Hya2 Heq).
+    - (* a1 <= M, a2 > M: a1 survivor, a2 RHS. *)
+      apply (proj1 (Nat.leb_le a1 M)) in H1.
+      apply (leb_false_to_lt a2 M) in H2.
+      exfalso.
+      rewrite (rs_map_surv a1 H1) in Heq.
+      rewrite (rs_map_shift a2 H2) in Heq.
+      assert (Hb1 : ni_map H a1 <= Mx). { exact (ni_map_bound a1 (rsY_surv_is_Y_agent a1 Ha1 H1)). }
+      assert (Hs2 : Mx < shift Mx M a2).
+      { destruct (rsY_rhs_form a2 Ha2 H2) as [i Hfi].
+        rewrite Hfi.
+        rewrite shift_fresh.
+        unfold fresh_id, Mx. lia. }
+      lia.
+    - (* a1 > M, a2 <= M: a1 RHS, a2 survivor. *)
+      apply (leb_false_to_lt a1 M) in H1.
+      apply (proj1 (Nat.leb_le a2 M)) in H2.
+      exfalso.
+      rewrite (rs_map_shift a1 H1) in Heq.
+      rewrite (rs_map_surv a2 H2) in Heq.
+      assert (Hb2 : ni_map H a2 <= Mx). { exact (ni_map_bound a2 (rsY_surv_is_Y_agent a2 Ha2 H2)). }
+      assert (Hs1 : Mx < shift Mx M a1).
+      { destruct (rsY_rhs_form a1 Ha1 H1) as [i Hfi].
+        rewrite Hfi.
+        rewrite shift_fresh.
+        unfold fresh_id, Mx. lia. }
+      lia.
+    - (* a1 > M, a2 > M: both RHS. *)
+      apply (leb_false_to_lt a1 M) in H1.
+      apply (leb_false_to_lt a2 M) in H2.
+      destruct (rsY_rhs_form a1 Ha1 H1) as [i1 Hf1].
+      destruct (rsY_rhs_form a2 Ha2 H2) as [i2 Hf2].
+      rewrite Hf1, Hf2 in Heq.
+      rewrite (rs_map_fresh i1), (rs_map_fresh i2) in Heq.
+      unfold fresh_id, Mx in Heq.
+      assert (Hii : i1 = i2). { lia. }
+      rewrite Hf1, Hf2.
+      rewrite Hii.
+      reflexivity.
+  Qed.
+
+  (* ========================================================================== *)
+  (* Link-level machinery for the [ni_links] field.                             *)
+  (* ========================================================================== *)
+
+  (* Rewiring one endpoint of a kept link of [Y] (resp. [X]) by the splice at
+     [a, b] (resp. at the images [ma, mb]). *)
+  Local Definition ma := ni_map H a.
+  Local Definition mb := ni_map H b.
+  Local Definition rwYe (e : port_ref) : port_ref := rewire_endpoint A Ar Y a b r e.
+  Local Definition rwXe (e : port_ref) : port_ref := rewire_endpoint A Ar X ma mb r e.
+
+  (* The iso renaming applied to one endpoint (agent renamed, port kept). *)
+  Local Definition H_ep (e : port_ref) : port_ref := (ni_map H (fst e), snd e).
+
+  (* The witnessing renaming applied to a whole link (both endpoints). *)
+  Local Definition G_link (l : port_ref * port_ref) : port_ref * port_ref :=
+    ((rs_map (fst (fst l)), snd (fst l)), (rs_map (fst (snd l)), snd (snd l))).
+
+  (* The iso renaming applied to a whole link. *)
+  Local Definition H_link (l : port_ref * port_ref) : port_ref * port_ref :=
+    ((ni_map H (fst (fst l)), snd (fst l)), (ni_map H (fst (snd l)), snd (snd l))).
+
+  (* The kept-link and fresh-link blocks of [rsY] and [rsX]. *)
+  Local Definition kept_Y : list (port_ref * port_ref) :=
+    filter (fun k => negb (is_main_main_link a b k)) (nt_links Y).
+  Local Definition kept_X : list (port_ref * port_ref) :=
+    filter (fun k => negb (is_main_main_link ma mb k)) (nt_links X).
+  Local Definition fresh_Y : list (port_ref * port_ref) :=
+    map (fun l => (freshen_pr A Y (fst l), freshen_pr A Y (snd l))) (nt_links (ru_rhs r)).
+  Local Definition fresh_X : list (port_ref * port_ref) :=
+    map (fun l => (freshen_pr A X (fst l), freshen_pr A X (snd l))) (nt_links (ru_rhs r)).
+  Local Definition rwYl (l : port_ref * port_ref) : port_ref * port_ref := rewire_link A Ar Y a b r l.
+  Local Definition rwXl (l : port_ref * port_ref) : port_ref * port_ref := rewire_link A Ar X ma mb r l.
+
+  (* [nt_links rsY] and [nt_links rsX] decompose into kept and fresh blocks. *)
+  Local Lemma rsY_links_decomp : nt_links rsY = map rwYl kept_Y ++ fresh_Y.
+  Proof.
+    unfold rsY, raw_splice, splice_links, kept_Y, fresh_Y, rwYl.
+    reflexivity.
+  Qed.
+
+  Local Lemma rsX_links_decomp : nt_links rsX = map rwXl kept_X ++ fresh_X.
+  Proof.
+    unfold rsX, raw_splice, splice_links, kept_X, fresh_X, rwXl.
+    reflexivity.
+  Qed.
+
+  (* Applying the same function to both sides of a permutation preserves the
+     permutation (the image multiset is unchanged). *)
+  Local Lemma Permutation_map {T U} (f : T -> U) (L1 L2 : list T)
+        (Hperm : Permutation L1 L2) :
+    Permutation (map f L1) (map f L2).
+  Proof.
+    induction Hperm as [|x0 l l' Hpl IH | x0 y0 l | l0 l1 l2 Hpre1 IHpre1 Hpre2 IHpre2].
+    - simpl. apply Permutation_refl.
+    - simpl. apply perm_skip. exact IH.
+    - simpl. apply perm_swap.
+    - apply (Permutation_trans IHpre1 IHpre2).
+  Qed.
+
+  (* [ni_map H] preserves the equality test against a fixed agent [c] of [Y],
+     stated directly on agent ids (rather than agent pairs). *)
+  Local Lemma ni_map_eqb_agent (x c : nat) (Hx : has_agent A Y x) (Hc : has_agent A Y c) :
+    Nat.eqb x c = Nat.eqb (ni_map H x) (ni_map H c).
+  Proof.
+    apply (proj1 (has_agent_In A Y x)) in Hx.
+    apply (proj1 (in_map_iff fst (nt_agents Y) x)) in Hx as [p [Hfp Hpin]].
+    rewrite <- Hfp.
+    exact (ni_map_eqb p Hpin c Hc).
+  Qed.
+
+  (* The main--main test is preserved by the iso renaming: for a link [l]
+     of [Y], [l] is the [a b] main--main link iff its image [H_link l] is the
+     [ma mb] main--main link. This lets [perm_filter] strip the fired link from
+     both sides of [ni_links H]. *)
+  Local Lemma mm_pres (l : port_ref * port_ref) (Hl : In l (nt_links Y)) :
+    is_main_main_link a b l = is_main_main_link ma mb (H_link l).
+  Proof.
+    destruct l as [[x1 u1] [x2 u2]].
+    unfold H_link, ma, mb.
+    assert (Hx1 : has_agent A Y x1).
+    { exact (proj1 (wf_link_agents A Ar Y HwfY x1 x2 u1 u2 Hl)). }
+    assert (Hx2 : has_agent A Y x2).
+    { exact (proj2 (wf_link_agents A Ar Y HwfY x1 x2 u1 u2 Hl)). }
+    assert (He1 : Nat.eqb x1 a = Nat.eqb (ni_map H x1) (ni_map H a)).
+    { exact (ni_map_eqb_agent x1 a Hx1 Ha). }
+    assert (He2 : Nat.eqb x1 b = Nat.eqb (ni_map H x1) (ni_map H b)).
+    { exact (ni_map_eqb_agent x1 b Hx1 Hb). }
+    assert (He3 : Nat.eqb x2 a = Nat.eqb (ni_map H x2) (ni_map H a)).
+    { exact (ni_map_eqb_agent x2 a Hx2 Ha). }
+    assert (He4 : Nat.eqb x2 b = Nat.eqb (ni_map H x2) (ni_map H b)).
+    { exact (ni_map_eqb_agent x2 b Hx2 Hb). }
+    simpl.
+    rewrite He1, He2, He3, He4.
+    reflexivity.
+  Qed.
+
+  (* The endpoint crux: rewiring one endpoint [e] of a kept link of [Y] by the
+     splice at [a, b], then renaming by [rs_map], equals renaming [e] by the iso
+     and rewiring by the splice at [ma, mb]. This is the single-splice analogue
+     of the commutation crux. *)
+  Local Lemma rs_crux_ep (l : port_ref * port_ref) (Hl : In l kept_Y) (e : port_ref) (He : link_end l e) :
+    (rs_map (fst (rwYe e)), snd (rwYe e)) = rwXe (H_ep e).
+  Proof.
+    destruct e as [x p].
+    (* [l] is a kept link of [Y]: a link of [Y], not the [a b] main--main link. *)
+    apply (proj1 (filter_In (fun k : port_ref * port_ref => negb (is_main_main_link a b k)) l (nt_links Y))) in Hl.
+    destruct Hl as [Hln _].
+    destruct l as [[x1 u1] [x2 u2]].
+    (* [x] is an agent of [Y] (endpoint of a link of a well-formed net). *)
+    assert (Hx : has_agent A Y x).
+    { simpl in He.
+      destruct He as [He1 | He2].
+      - injection He1 as Hx1 Hu1. subst x1. subst u1.
+        exact (proj1 (wf_link_agents A Ar Y HwfY x x2 p u2 Hln)).
+      - injection He2 as Hx2 Hu2. subst x2. subst u2.
+        exact (proj2 (wf_link_agents A Ar Y HwfY x1 x u1 p Hln)). }
+    (* [x <= M], since [x] is an agent of [Y]. *)
+    assert (Hlx : x <= M).
+    { unfold M.
+      apply (list_max_upper_bound (map fst (nt_agents Y)) x).
+      apply (proj1 (has_agent_In A Y x)).
+      exact Hx. }
+    (* Case split on the agent of the endpoint. *)
+    destruct (Nat.eqb x a) eqn:Hxa.
+    - (* x = a *)
+      apply (proj1 (Nat.eqb_eq x a)) in Hxa. subst x.
+      assert (Hlea : a <= M).
+      { unfold M.
+        apply (list_max_upper_bound (map fst (nt_agents Y)) a).
+        apply (proj1 (has_agent_In A Y a)).
+        exact Ha. }
+      assert (Hep : H_ep (a, p) = (ma, p)).
+      { unfold H_ep, ma. simpl. reflexivity. }
+      rewrite Hep.
+      destruct (Nat.leb 1 p && Nat.leb p (Ar (fst (ru_lhs r)))) eqn:Hrange.
+      + (* in range: both sides freshen to the same RHS port. *)
+        set (ipr := nth (p - 1) (ru_iface r) (0, 0)).
+        set (ia := fst ipr).
+        set (ipp := snd ipr).
+        assert (HrYe : rwYe (a, p) = (fresh_id A Y ia, ipp)).
+        { unfold rwYe, rewire_endpoint.
+          assert (Heqa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+          rewrite Heqa, Hrange. simpl. unfold freshen_pr. reflexivity. }
+        assert (HrXe : rwXe (ma, p) = (fresh_id A X ia, ipp)).
+        { unfold rwXe, rewire_endpoint.
+          assert (Hema : Nat.eqb ma ma = true). { apply (proj2 (Nat.eqb_eq ma ma)). reflexivity. }
+          rewrite Hema, Hrange. simpl. unfold freshen_pr. reflexivity. }
+        rewrite HrYe, HrXe.
+        f_equal.
+        exact (rs_map_fresh ia).
+      + (* out of range: both sides keep the endpoint. *)
+        assert (HrYe : rwYe (a, p) = (a, p)).
+        { unfold rwYe, rewire_endpoint.
+          assert (Heqa : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+          rewrite Heqa, Hrange. simpl. reflexivity. }
+        assert (HrXe : rwXe (ma, p) = (ma, p)).
+        { unfold rwXe, rewire_endpoint.
+          assert (Hema : Nat.eqb ma ma = true). { apply (proj2 (Nat.eqb_eq ma ma)). reflexivity. }
+          rewrite Hema, Hrange. simpl. reflexivity. }
+        rewrite HrYe, HrXe.
+        f_equal.
+        exact (rs_map_surv a Hlea).
+    - (* x <> a *)
+      destruct (Nat.eqb x b) eqn:Hxb.
+      + (* x = b *)
+        apply (proj1 (Nat.eqb_eq x b)) in Hxb.
+        (* b <> a, so the [a] branch of [rwYe] does not fire; and
+           ni_map H b <> ni_map H a, so the [ma] branch of [rwXe] does not fire. *)
+        assert (Hba_f : Nat.eqb b a = false).
+        { destruct (Nat.eqb b a) eqn:Hbeq.
+          - exfalso. apply (proj1 (Nat.eqb_eq b a)) in Hbeq.
+            rewrite Hxb in Hxa.
+            rewrite Hbeq in Hxa.
+            assert (Ht : Nat.eqb a a = true).
+            { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+            rewrite Ht in Hxa. discriminate Hxa.
+          - reflexivity. }
+        subst x.
+        assert (Hleb : b <= M).
+        { unfold M.
+          apply (list_max_upper_bound (map fst (nt_agents Y)) b).
+          apply (proj1 (has_agent_In A Y b)).
+          exact Hb. }
+        assert (Hep : H_ep (b, p) = (mb, p)).
+        { unfold H_ep, mb. simpl. reflexivity. }
+        rewrite Hep.
+        assert (Hmb_ma_f : Nat.eqb mb ma = false).
+        { unfold mb, ma.
+          destruct (Nat.eqb (ni_map H b) (ni_map H a)) eqn:Hm.
+          - exfalso.
+            apply (proj1 (Nat.eqb_eq (ni_map H b) (ni_map H a))) in Hm.
+            assert (Hba_eq : b = a). { exact (ni_inj H b a Hb Ha Hm). }
+            assert (Hba_ne : b <> a).
+            { intro Heq. rewrite Heq in Hba_f.
+              assert (Ht : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+              rewrite Ht in Hba_f. discriminate Hba_f. }
+            exfalso. apply Hba_ne. exact Hba_eq.
+          - reflexivity. }
+        destruct (Nat.leb 1 p && Nat.leb p (Ar (snd (ru_lhs r)))) eqn:Hrange.
+        * (* in range: both sides freshen to the same RHS port. *)
+          set (ipr := nth (Ar (fst (ru_lhs r)) + (p - 1)) (ru_iface r) (0, 0)).
+          set (ia := fst ipr).
+          set (ipp := snd ipr).
+          assert (HrYe : rwYe (b, p) = (fresh_id A Y ia, ipp)).
+          { unfold rwYe, rewire_endpoint.
+            assert (Hba_b : Nat.eqb b a = false). exact Hba_f.
+            assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+            rewrite Hba_b, Hbb, Hrange. simpl. unfold freshen_pr. reflexivity. }
+          assert (HrXe : rwXe (mb, p) = (fresh_id A X ia, ipp)).
+          { unfold rwXe, rewire_endpoint.
+            assert (Hmb_ma_b : Nat.eqb mb ma = false). exact Hmb_ma_f.
+            assert (Hmbmb : Nat.eqb mb mb = true). { apply (proj2 (Nat.eqb_eq mb mb)). reflexivity. }
+            rewrite Hmb_ma_b, Hmbmb, Hrange. simpl. unfold freshen_pr. reflexivity. }
+          rewrite HrYe, HrXe.
+          f_equal.
+          exact (rs_map_fresh ia).
+        * (* out of range: both sides keep the endpoint. *)
+          assert (HrYe : rwYe (b, p) = (b, p)).
+          { unfold rwYe, rewire_endpoint.
+            assert (Hba_b : Nat.eqb b a = false). exact Hba_f.
+            assert (Hbb : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+            rewrite Hba_b, Hbb, Hrange. simpl. reflexivity. }
+          assert (HrXe : rwXe (mb, p) = (mb, p)).
+          { unfold rwXe, rewire_endpoint.
+            assert (Hmb_ma_b : Nat.eqb mb ma = false). exact Hmb_ma_f.
+            assert (Hmbmb : Nat.eqb mb mb = true). { apply (proj2 (Nat.eqb_eq mb mb)). reflexivity. }
+            rewrite Hmb_ma_b, Hmbmb, Hrange. simpl. reflexivity. }
+          rewrite HrYe, HrXe.
+          f_equal.
+          exact (rs_map_surv b Hleb).
+      + (* x <> a, x <> b: both sides keep the endpoint. *)
+        assert (Hxa_f : x <> a).
+        { intro Heq. rewrite Heq in Hxa.
+          assert (Ht : Nat.eqb a a = true). { apply (proj2 (Nat.eqb_eq a a)). reflexivity. }
+          rewrite Ht in Hxa. discriminate Hxa. }
+        assert (Hxb_f : x <> b).
+        { intro Heq. rewrite Heq in Hxb.
+          assert (Ht : Nat.eqb b b = true). { apply (proj2 (Nat.eqb_eq b b)). reflexivity. }
+          rewrite Ht in Hxb. discriminate Hxb. }
+        assert (HrYe : rwYe (x, p) = (x, p)).
+        { unfold rwYe, rewire_endpoint.
+          rewrite Hxa, Hxb. simpl. reflexivity. }
+        assert (Hnx_ma : Nat.eqb (ni_map H x) ma = false).
+        { unfold ma.
+          destruct (Nat.eqb (ni_map H x) (ni_map H a)) eqn:Hm.
+          - exfalso.
+            apply (proj1 (Nat.eqb_eq (ni_map H x) (ni_map H a))) in Hm.
+            assert (Hxa_eq : x = a). { exact (ni_inj H x a Hx Ha Hm). }
+            exfalso. apply Hxa_f. exact Hxa_eq.
+          - reflexivity. }
+        assert (Hnx_mb : Nat.eqb (ni_map H x) mb = false).
+        { unfold mb.
+          destruct (Nat.eqb (ni_map H x) (ni_map H b)) eqn:Hm.
+          - exfalso.
+            apply (proj1 (Nat.eqb_eq (ni_map H x) (ni_map H b))) in Hm.
+            assert (Hxb_eq : x = b). { exact (ni_inj H x b Hx Hb Hm). }
+            exfalso. apply Hxb_f. exact Hxb_eq.
+          - reflexivity. }
+        assert (HrXe : rwXe (ni_map H x, p) = (ni_map H x, p)).
+        { unfold rwXe, rewire_endpoint.
+          rewrite Hnx_ma, Hnx_mb. simpl. reflexivity. }
+        assert (Hep : H_ep (x, p) = (ni_map H x, p)).
+        { unfold H_ep. simpl. reflexivity. }
+        rewrite Hep, HrYe, HrXe.
+        f_equal.
+        exact (rs_map_surv x Hlx).
+  Qed.
+
+  (* The link-level crux: a kept link of [Y], rewired by the splice at [a, b]
+     and renamed by [rs_map], equals the same link renamed by the iso and rewired
+     by the splice at [ma, mb]. Follows from the endpoint crux on both ends. *)
+  Local Lemma rs_crux_link (l : port_ref * port_ref) (Hl : In l kept_Y) :
+    G_link (rwYl l) = rwXl (H_link l).
+  Proof.
+    unfold G_link, rwYl, rwXl, H_link, rewire_link, rwYe, rwXe, H_ep.
+    simpl.
+    assert (He1 : link_end l (fst l)). { left. reflexivity. }
+    assert (He2 : link_end l (snd l)). { right. reflexivity. }
+    assert (H1 : (rs_map (fst (rewire_endpoint A Ar Y a b r (fst l))), snd (rewire_endpoint A Ar Y a b r (fst l))) = rewire_endpoint A Ar X ma mb r (ni_map H (fst (fst l)), snd (fst l))).
+    { exact (rs_crux_ep l Hl (fst l) He1). }
+    assert (H2 : (rs_map (fst (rewire_endpoint A Ar Y a b r (snd l))), snd (rewire_endpoint A Ar Y a b r (snd l))) = rewire_endpoint A Ar X ma mb r (ni_map H (fst (snd l)), snd (snd l))).
+    { exact (rs_crux_ep l Hl (snd l) He2). }
+    rewrite H1, H2.
+    reflexivity.
+  Qed.
+
+  (* Pointwise-equal functions induce equal maps (link version). *)
+  Local Lemma rs_map_ptw_link (f g : port_ref * port_ref -> port_ref * port_ref) (l : list (port_ref * port_ref)) :
+    (forall x, In x l -> f x = g x) -> map f l = map g l.
+  Proof.
+    induction l as [|h t IH]; intros Hpt; simpl.
+    - reflexivity.
+    - assert (Hh : f h = g h). { exact (Hpt h (in_eq h t)). }
+      rewrite Hh.
+      assert (Ht : forall x, In x t -> f x = g x).
+      { intros x Hx. exact (Hpt x (in_cons h x t Hx)). }
+      rewrite (IH Ht). reflexivity.
+  Qed.
+
+  (* The freshened link block of [rsY], under [G_link], is carried positionally
+     to that of [rsX] (by [rs_map_fresh] on each endpoint). *)
+  Local Lemma mapG_link_fresh_eq : map G_link fresh_Y = fresh_X.
+  Proof.
+    unfold fresh_Y, fresh_X, G_link, freshen_pr.
+    rewrite map_map.
+    apply (rs_map_ptw_link
+           (fun l : port_ref * port_ref => G_link (freshen_pr A Y (fst l), freshen_pr A Y (snd l)))
+           (fun l : port_ref * port_ref => (freshen_pr A X (fst l), freshen_pr A X (snd l)))
+           (nt_links (ru_rhs r))).
+    intros l Hl.
+    unfold G_link, freshen_pr.
+    simpl.
+    rewrite (rs_map_fresh (fst (fst l))), (rs_map_fresh (fst (snd l))).
+    reflexivity.
+  Qed.
+
+  (* The [ni_links] field: the links of [rsY] under [G_link] are a permutation
+     of the links of [rsX]. Both split into a kept block (related by transporting
+     [ni_links H] through the rewiring) and a shared freshened block. *)
+  Local Lemma rs_ni_links :
+    Permutation (map G_link (nt_links rsY)) (nt_links rsX).
+  Proof.
+    rewrite rsY_links_decomp, rsX_links_decomp.
+    rewrite map_app.
+    rewrite map_map.
+    rewrite mapG_link_fresh_eq.
+    (* Goal: Permutation (map (fun l => G_link (rwYl l)) kept_Y ++ fresh_X)
+                  (map rwXl kept_X ++ fresh_X). *)
+    apply Permutation_app.
+    - (* Permutation (map (fun l => G_link (rwYl l)) kept_Y) (map rwXl kept_X). *)
+      (* The kept block of [rsX] is the image, under [H_link], of the kept block
+         of [Y] (the main--main test is preserved by [H_link]). *)
+      assert (Hmf : map H_link kept_Y = filter (fun l : port_ref * port_ref => negb (is_main_main_link ma mb l)) (map H_link (nt_links Y))).
+      { unfold kept_Y.
+        apply (map_filter_commute H_link
+               (fun l : port_ref * port_ref => negb (is_main_main_link a b l))
+               (fun l : port_ref * port_ref => negb (is_main_main_link ma mb l))
+               (nt_links Y)).
+        intros l Hl.
+        f_equal.
+        exact (mm_pres l Hl). }
+      assert (Hperm_kept : Permutation (map H_link kept_Y) kept_X).
+      { rewrite Hmf.
+        apply (perm_filter (fun l : port_ref * port_ref => negb (is_main_main_link ma mb l))
+                           (map H_link (nt_links Y)) (nt_links X) (ni_links H)). }
+      (* Rewiring commutes with the iso renaming on kept links. *)
+      assert (Hpt : map (fun l => G_link (rwYl l)) kept_Y = map (fun l => rwXl (H_link l)) kept_Y).
+      { apply (rs_map_ptw_link (fun l => G_link (rwYl l)) (fun l => rwXl (H_link l)) kept_Y).
+        intros l Hl.
+        exact (rs_crux_link l Hl). }
+      rewrite Hpt.
+      rewrite <- map_map.
+      exact (Permutation_map rwXl (map H_link kept_Y) kept_X Hperm_kept).
+    - apply Permutation_refl.
+  Qed.
+
+  (**************************************************************************)
+  (** ** The main result: splicing commutes with the iso renaming. *)
+
+  (** Splicing [Y] at [a, b] is isomorphic to splicing [X] at the images of
+      [a, b] under the iso [H : net_iso Y X]. The witnessing renaming is
+      [rs_map]: the iso map on the surviving agents (ids [<= M]) and the
+      [shift] to the freshened RHS block (ids [> M]). This is the single-splice
+      analogue of the two-splice commutation ([step_commuting]). *)
+  Theorem raw_splice_iso_compat :
+    net_iso A Ar rsY rsX.
+  Proof.
+    exact (@mkNetIso A Ar rsY rsX rs_map rs_ni_agents rs_ni_inj rs_ni_links).
+  Qed.
+
+  End RawSpliceIso.
+
+(**************************************************************************)
+(** ** Compatibility of [step] with isomorphism of the source *)
+
+(** [step] is compatible with isomorphism of the source: if [X] is isomorphic
+    to [Y], [X] is well-formed, and [Y] steps to [Z], then [X] steps to [Z].
+    This transfers a step across an iso by re-firing the image of the active
+    pair in [X] (via [raw_splice_iso_compat]). It is the source-side dual of
+    [step_iso_compat_r]. *)
+Lemma step_iso_compat_l (A : Type) (S : System A) (X Y Z : Net A)
+      (Hxy : net_iso A (sys_arity S) X Y)
+      (HwfX : well_formed A (sys_arity S) X)
+      (Hstep : step A S Y Z) :
+  step A S X Z.
+Proof.
+  set (Ar := sys_arity S).
+  destruct Hstep as [Y Z a b α β r HwfY Hap Hla Hlb Hr Hlhs HisoZ].
+  (* Inverse iso: [Y -> X]. *)
+  assert (Hyx : net_iso A Ar Y X).
+  { exact (net_iso_symmetric A Ar X Y Hxy HwfX). }
+  set (ma := @ni_map A Ar Y X Hyx a).
+  set (mb := @ni_map A Ar Y X Hyx b).
+  (* [a], [b] are agents of [Y]. *)
+  assert (Ha : has_agent A Y a).
+  { change (a <> b /\ has_agent A Y a /\ has_agent A Y b /\ has_link A Y (a, 0) (b, 0)) in Hap.
+    exact (proj1 (proj2 Hap)). }
+  assert (Hb : has_agent A Y b).
+  { change (a <> b /\ has_agent A Y a /\ has_agent A Y b /\ has_link A Y (a, 0) (b, 0)) in Hap.
+    exact (proj1 (proj2 (proj2 Hap))). }
+  (* Splicing [Y] at [a, b] is iso to splicing [X] at [ma, mb]. *)
+  assert (Hsp : net_iso A Ar (raw_splice A Ar Y a b r) (raw_splice A Ar X ma mb r)).
+  { exact (raw_splice_iso_compat A Ar Y X Hyx a b r Ha Hb HwfY). }
+  (* [raw_splice Y a b r] is well-formed. *)
+  assert (Hrhs : well_formed A Ar (ru_rhs r)).
+  { exact (sys_valid_wf A S α β r Hr). }
+  assert (Hiface : ru_iface r = interface A Ar (ru_rhs r)).
+  { exact (sys_valid_iface A S α β r Hr). }
+  assert (Hlen := sys_valid_len A S α β r Hr).
+  rewrite !Hlhs in Hlen. simpl in Hlen.
+  assert (HspY : well_formed A Ar (raw_splice A Ar Y a b r)).
+  { exact (raw_splice_wf A Ar Y a b r α β Hla Hlb Hlhs HwfY Hap Hrhs Hiface Hlen). }
+  (* Flip [Hsp]: [raw_splice X ma mb r -> raw_splice Y a b r]. *)
+  assert (Hsp' : net_iso A Ar (raw_splice A Ar X ma mb r) (raw_splice A Ar Y a b r)).
+  { exact (net_iso_symmetric A Ar (raw_splice A Ar Y a b r) (raw_splice A Ar X ma mb r) Hsp HspY). }
+  (* Compose with [HisoZ]: [raw_splice X ma mb r -> Z]. *)
+  assert (HisoZ' : net_iso A Ar (raw_splice A Ar X ma mb r) Z).
+  { exact (net_iso_transitive A Ar (raw_splice A Ar X ma mb r) (raw_splice A Ar Y a b r) Z Hsp' HisoZ). }
+  (* [ma, mb] are an active pair in [X]. *)
+  assert (HapX : is_active_pair A Ar X ma mb).
+  { exact (net_iso_pres_active_pair A Ar Y X Hyx a b Hap). }
+  (* Labels are preserved by the iso. *)
+  assert (HlaX : agent_label A X ma = Some α).
+  { unfold ma.
+    assert (Heq : agent_label A X (@ni_map A Ar Y X Hyx a) = agent_label A Y a).
+    { exact (net_iso_label A Ar Y X Hyx HwfY a Ha). }
+    rewrite Heq. exact Hla. }
+  assert (HlbX : agent_label A X mb = Some β).
+  { unfold mb.
+    assert (Heq : agent_label A X (@ni_map A Ar Y X Hyx b) = agent_label A Y b).
+    { exact (net_iso_label A Ar Y X Hyx HwfY b Hb). }
+    rewrite Heq. exact Hlb. }
+  refine (step_intro A S X Z ma mb α β r HwfX HapX HlaX HlbX Hr Hlhs HisoZ').
+Qed.
+
+(**************************************************************************)
+(** ** Label preservation under [raw_splice] (for the diamond) *)
+
+(** A surviving agent of [raw_splice] (one whose id is neither of the two fired
+    agents) keeps its label: the filter that removes the fired agents leaves its
+    entry untouched, and its id is below the fresh-id threshold, so the freshened
+    RHS block cannot shadow it. Both lookups (in the spliced net and in [N])
+    return the same [Some la], since [c]'s entry is present in both and [c]
+    appears at most once (by [wf_ids]). *)
+Lemma raw_splice_pres_label (A : Type) (Ar : A -> nat) (N : Net A)
+      (Hwf : well_formed A Ar N) (a b c : nat) (r : Rule A)
+      (Hc : has_agent A N c) (Hca : c <> a) (Hcb : c <> b) :
+  agent_label A (raw_splice A Ar N a b r) c = agent_label A N c.
+Proof.
+  set (Q := fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)).
+  set (fresh := fun p : nat * A => (fresh_id A N (fst p), snd p)).
+  set (fb := map fresh (nt_agents (ru_rhs r))).
+  unfold agent_label, raw_splice, splice_agents.
+  simpl.
+  (* Pin the goal to the [Q]/[fb] spelling so [rewrite] can match it. *)
+  change (agent_label_lookup A c (filter Q (nt_agents N) ++ fb) = agent_label_lookup A c (nt_agents N)).
+  assert (Hc_in : In c (map fst (nt_agents N))).
+  { exact (proj1 (has_agent_In A N c) Hc). }
+  destruct (agent_label A N c) as [la|] eqn:Hlook.
+  - (* Hlook : agent_label N c = Some la. *)
+    assert (Hcin : In (c, la) (nt_agents N)).
+    { exact (agent_label_Some_In A N c la Hlook). }
+    (* c survives the filter (c <> a and c <> b). *)
+    assert (Hcsurv : In (c, la) (filter Q (nt_agents N))).
+    { apply (proj2 (filter_In Q (c, la) (nt_agents N))).
+      split.
+      + exact Hcin.
+      + unfold Q. simpl.
+        destruct (Nat.eqb c a) eqn:Hb1; destruct (Nat.eqb c b) eqn:Hb2.
+        - exfalso. apply (proj1 (Nat.eqb_eq c a)) in Hb1. apply Hca. exact Hb1.
+        - exfalso. apply (proj1 (Nat.eqb_eq c a)) in Hb1. apply Hca. exact Hb1.
+        - exfalso. apply (proj1 (Nat.eqb_eq c b)) in Hb2. apply Hcb. exact Hb2.
+        - simpl. reflexivity. }
+    (* c's entry is in the appended list (the filtered part). *)
+    assert (Hcsurv_app : In (c, la) (filter Q (nt_agents N) ++ fb)).
+    { apply (in_or_app (filter Q (nt_agents N)) fb (c, la)). left. exact Hcsurv. }
+    (* c is not a fresh id (c <= max_agent_id N < fresh_id A N 0). *)
+    assert (Hc_le : c <= max_agent_id A N).
+    { exact (list_max_upper_bound (map fst (nt_agents N)) c Hc_in). }
+    assert (Hc_not_fb : ~ In c (map fst fb)).
+    { intro H.
+      apply (proj1 (in_map_iff fst fb c)) in H.
+      destruct H as [p Hpc].
+      destruct Hpc as [Hcp Hin].
+      unfold fb in Hin.
+      apply (proj1 (in_map_iff fresh (nt_agents (ru_rhs r)) p)) in Hin.
+      destruct Hin as [q Hq].
+      destruct Hq as [Hqeq Hqin].
+      unfold fresh in Hqeq.
+      destruct p as [px py].
+      simpl in Hcp.
+      injection Hqeq as Hcid Hs.
+      rewrite Hcp in Hcid.
+      unfold fresh_id in Hcid.
+      exfalso. lia. }
+    (* Functionality: c appears at most once in the appended list. *)
+    assert (Hfun : forall l1 l2, In (c, l1) (filter Q (nt_agents N) ++ fb) -> In (c, l2) (filter Q (nt_agents N) ++ fb) -> l1 = l2).
+    { intros l1 l2 H1 H2.
+      apply in_app_or in H1. apply in_app_or in H2.
+      destruct H1 as [H1f|H1x]; destruct H2 as [H2f|H2x].
+      - exact (wf_ids_functional Hwf c l1 l2
+             (proj1 (proj1 (filter_In Q (c, l1) (nt_agents N)) H1f))
+             (proj1 (proj1 (filter_In Q (c, l2) (nt_agents N)) H2f))).
+      - exfalso. apply Hc_not_fb. apply (proj2 (in_map_iff fst fb c)).
+        exists (c, l2). split; [reflexivity | exact H2x].
+      - exfalso. apply Hc_not_fb. apply (proj2 (in_map_iff fst fb c)).
+        exists (c, l1). split; [reflexivity | exact H1x].
+      - exfalso. apply Hc_not_fb. apply (proj2 (in_map_iff fst fb c)).
+        exists (c, l1). split; [reflexivity | exact H1x]. }
+    (* The lookup in the spliced net is [Some la]. *)
+    assert (Hlook_sp : agent_label_lookup A c (filter Q (nt_agents N) ++ fb) = Some la).
+    { exact (agent_label_lookup_In A c (filter Q (nt_agents N) ++ fb) la Hcsurv_app Hfun). }
+    (* The lookup in [N] is [Some la]. *)
+    assert (Hlook_N : agent_label_lookup A c (nt_agents N) = Some la).
+    { exact (agent_label_lookup_In A c (nt_agents N) la Hcin (wf_ids_functional Hwf c)). }
+    rewrite Hlook_sp, Hlook_N.
+    reflexivity.
+  - (* agent_label N c = None. Contradiction: c is an agent, so its label is [Some]. *)
+    exfalso.
+    apply (proj1 (in_map_iff fst (nt_agents N) c)) in Hc_in.
+    destruct Hc_in as [p Hpc].
+    destruct Hpc as [Hcp Hp].
+    destruct p as [x la]. simpl in Hcp. subst x.
+    (* Hp : In (c, la) (nt_agents N). *)
+    assert (Hsome : agent_label_lookup A c (nt_agents N) = Some la).
+    { exact (agent_label_lookup_In A c (nt_agents N) la Hp (wf_ids_functional Hwf c)). }
+    unfold agent_label in Hlook.
+    rewrite Hsome in Hlook.
+    discriminate Hlook.
+Qed.
+
+(** A surviving agent of [raw_splice] (one whose id is neither of the two
+    fired agents) is still an agent of the spliced net: the filter that
+    removes the fired agents keeps its entry. *)
+Lemma raw_splice_pres_agent (A : Type) (Ar : A -> nat) (N : Net A)
+      (a b c : nat) (r : Rule A)
+      (Hc : has_agent A N c) (Hca : c <> a) (Hcb : c <> b) :
+  has_agent A (raw_splice A Ar N a b r) c.
+Proof.
+  set (Q := fun p : nat * A => negb (Nat.eqb (fst p) a) && negb (Nat.eqb (fst p) b)).
+  apply (proj2 (has_agent_In A (raw_splice A Ar N a b r) c)).
+  unfold raw_splice.
+  simpl.
+  (* Goal: In c (map fst (splice_agents A N a b r)). *)
+  unfold splice_agents.
+  simpl.
+  (* Goal: In c (map fst (filter Q (nt_agents N) ++ map (fun p => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r)))). *)
+  apply (proj1 (has_agent_In A N c)) in Hc.
+  apply (proj1 (in_map_iff fst (nt_agents N) c)) in Hc.
+  destruct Hc as [p Hpc].
+  destruct Hpc as [Hcp Hp].
+  destruct p as [x la].
+  simpl in Hcp. subst x.
+  (* Hp : In (c, la) (nt_agents N). *)
+  apply (proj2 (in_map_iff fst
+         (filter Q (nt_agents N) ++ map (fun p : nat * A => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r))) c)).
+  exists (c, la).
+  split.
+  - simpl. reflexivity.
+  - apply (in_or_app (filter Q (nt_agents N))
+         (map (fun p : nat * A => (fresh_id A N (fst p), snd p)) (nt_agents (ru_rhs r))) (c, la)).
+    left.
+    apply (proj2 (filter_In Q (c, la) (nt_agents N))).
+    split.
+    + exact Hp.
+    + unfold Q. simpl.
+      destruct (Nat.eqb c a) eqn:Hb1; destruct (Nat.eqb c b) eqn:Hb2.
+      * exfalso. apply (proj1 (Nat.eqb_eq c a)) in Hb1. apply Hca. exact Hb1.
+      * exfalso. apply (proj1 (Nat.eqb_eq c a)) in Hb1. apply Hca. exact Hb1.
+      * exfalso. apply (proj1 (Nat.eqb_eq c b)) in Hb2. apply Hcb. exact Hb2.
+      * simpl. reflexivity.
+Qed.
+
+(**************************************************************************)
+(** ** The distinct-LHS-labels condition (for the diamond) *)
+
+(** [distinct_lhs A S] holds when every rule of [S] has two DISTINCT LHS
+    labels: no rule fires on a pair of agents carrying the same label. This
+    rules out the swapped-orientation subcase of the diamond (firing [a, b]
+    versus [b, a] with a rule whose LHS is [(α, α)]), which would require
+    [raw_splice N a b r] to be isomorphic to [raw_splice N b a r] — false in
+    general (the two splices can be non-isomorphic normal forms). Spec §4.4
+    says rules are for *unordered* pairs, so such a rule must be symmetric
+    under swapping the two interface halves; our encoding does not enforce
+    that symmetry, so we exclude these rules instead. *)
+Definition distinct_lhs (A : Type) (S : System A) : Prop :=
+  forall α β (r : Rule A), sys_rules S α β = Some r ->
+    fst (ru_lhs r) <> snd (ru_lhs r).
+
+(**************************************************************************)
+(** ** Trichotomy of two active pairs *)
+
+(** Two active pairs of a well-formed net are either the same pair, the
+    swapped pair, or disjoint: sharing one agent forces them to be the same
+    (or swapped) pair, because a well-formed net has at most one main–main
+    link incident to a given agent's main port ([link_unique]). Pure
+    combinatorics — no rule-table premises are needed.
+
+    Stated as a [Type]-sorted sum ([pair_trichotomy]) rather than a [Prop]
+    disjunction, so that the diamond (whose goal is [Type]-sorted) can case-
+    analyze on it: a [Prop] disjunction cannot be eliminated into [Type]. The
+    proof therefore decides the endpoint equalities with the decidable
+    [Nat.eqb] (a [Set]-valued predicate, eliminable into [Type]) rather than
+    [classic]. *)
+Inductive pair_trichotomy (a b c d : nat) : Type :=
+| pt_same     : a = c -> b = d -> pair_trichotomy a b c d
+| pt_swapped  : a = d -> b = c -> pair_trichotomy a b c d
+| pt_disjoint : (a <> c /\ a <> d /\ b <> c /\ b <> d) -> pair_trichotomy a b c d.
+
+(** [eqb_false_neq x y H] turns a decidable-inequality witness [H : x =? y =
+    false] into the logical inequality [x <> y]. The converse of the
+    [false]-side of [Nat.eqb_eq], which Stdlib does not provide directly. *)
+Lemma eqb_false_neq (x y : nat) (H : Nat.eqb x y = false) : x <> y.
+Proof.
+  intro Hxy.
+  rewrite <- Hxy in H.
+  assert (Htt : Nat.eqb x x = true).
+  { apply (proj2 (Nat.eqb_eq x x)). reflexivity. }
+  rewrite Htt in H.
+  discriminate H.
+Qed.
+
+Lemma active_pairs_trichotomy (A : Type) (Ar : A -> nat) (N : Net A)
+      (Hwf : well_formed A Ar N) (a b c d : nat)
+      (Hap_ab : is_active_pair A Ar N a b) (Hap_cd : is_active_pair A Ar N c d) :
+  pair_trichotomy a b c d.
+Proof.
+  assert (Hlink_ab : has_link A N (a, 0) (b, 0)).
+  { unfold is_active_pair in Hap_ab.
+    exact (proj2 (proj2 (proj2 Hap_ab))). }
+  assert (Hlink_cd : has_link A N (c, 0) (d, 0)).
+  { unfold is_active_pair in Hap_cd.
+    exact (proj2 (proj2 (proj2 Hap_cd))). }
+  destruct (Nat.eqb a c) eqn:Hac_b.
+  - (* a = c *)
+    apply (proj1 (Nat.eqb_eq a c)) in Hac_b.
+    destruct (Nat.eqb b d) eqn:Hbd_b.
+    + (* b = d *)
+      apply (proj1 (Nat.eqb_eq b d)) in Hbd_b.
+      exact (pt_same a b c d Hac_b Hbd_b).
+    + (* b <> d *)
+      apply (eqb_false_neq b d) in Hbd_b.
+      exfalso.
+      rewrite <- Hac_b in Hlink_cd.
+      assert (Hbd' : (b, 0) = (d, 0)).
+      { exact (link_unique A Ar N Hwf (a, 0) (b, 0) (d, 0) Hlink_ab Hlink_cd). }
+      injection Hbd' as Hbd2.
+      apply Hbd_b. exact Hbd2.
+  - (* a <> c *)
+    apply (eqb_false_neq a c) in Hac_b.
+    destruct (Nat.eqb a d) eqn:Had_b.
+    + (* a = d *)
+      apply (proj1 (Nat.eqb_eq a d)) in Had_b.
+      destruct (Nat.eqb b c) eqn:Hbc_b.
+      * (* b = c *)
+        apply (proj1 (Nat.eqb_eq b c)) in Hbc_b.
+        exact (pt_swapped a b c d Had_b Hbc_b).
+      * (* b <> c *)
+        apply (eqb_false_neq b c) in Hbc_b.
+        exfalso.
+        rewrite <- Had_b in Hlink_cd.
+        assert (Hlink_ac : has_link A N (a, 0) (c, 0)).
+        { exact (proj1 (has_link_sym A N (c, 0) (a, 0)) Hlink_cd). }
+        assert (Hbc' : (b, 0) = (c, 0)).
+        { exact (link_unique A Ar N Hwf (a, 0) (b, 0) (c, 0) Hlink_ab Hlink_ac). }
+        injection Hbc' as Hbc2.
+        apply Hbc_b. exact Hbc2.
+    + (* a <> d *)
+      apply (eqb_false_neq a d) in Had_b.
+      destruct (Nat.eqb b c) eqn:Hbc_b.
+      * (* b = c *)
+        apply (proj1 (Nat.eqb_eq b c)) in Hbc_b.
+        exfalso.
+        rewrite <- Hbc_b in Hlink_cd.
+        assert (Hlink_ba : has_link A N (b, 0) (a, 0)).
+        { exact (proj1 (has_link_sym A N (a, 0) (b, 0)) Hlink_ab). }
+        assert (Had' : (a, 0) = (d, 0)).
+        { exact (link_unique A Ar N Hwf (b, 0) (a, 0) (d, 0) Hlink_ba Hlink_cd). }
+        injection Had' as Had2.
+        apply Had_b. exact Had2.
+      * (* b <> c *)
+        apply (eqb_false_neq b c) in Hbc_b.
+        destruct (Nat.eqb b d) eqn:Hbd_b.
+        -- (* b = d *)
+           apply (proj1 (Nat.eqb_eq b d)) in Hbd_b.
+           exfalso.
+           rewrite <- Hbd_b in Hlink_cd.
+           assert (Hlink_ba : has_link A N (b, 0) (a, 0)).
+           { exact (proj1 (has_link_sym A N (a, 0) (b, 0)) Hlink_ab). }
+           assert (Hlink_bc : has_link A N (b, 0) (c, 0)).
+           { exact (proj1 (has_link_sym A N (c, 0) (b, 0)) Hlink_cd). }
+           assert (Hac' : (a, 0) = (c, 0)).
+           { exact (link_unique A Ar N Hwf (b, 0) (a, 0) (c, 0) Hlink_ba Hlink_bc). }
+           injection Hac' as Hac2.
+           apply Hac_b. exact Hac2.
+        -- (* b <> d *)
+           apply (eqb_false_neq b d) in Hbd_b.
+           exact (pt_disjoint a b c d
+                  (conj Hac_b (conj Had_b (conj Hbc_b Hbd_b)))).
+Qed.
+
+(**************************************************************************)
+(** ** The diamond property (strong confluence, §4.7) *)
+
+(** The one-step diamond, up to renaming (§4.7): if [N] reduces to [N1] and
+    to [N2] (two steps of [S]), then there is a net [M] reachable from both
+    [N1] and [N2] (each in finitely many steps, up to renaming). Stated with
+    [step_star_iso] because the model is "nets up to renaming": the concrete
+    [step_star] diamond is false when the two steps fire the same pair and
+    yield distinct representatives of one isomorphism class (see
+    [step_star_iso]). The conclusion is a [Type]-sorted sig (with [∗])
+    because [step_star_iso] is [Type]-sorted.
+
+    Requires [distinct_lhs S]: the swapped-orientation subcase (firing
+    [a, b] versus [b, a] with a rule whose LHS is [(α, α)]) is excluded,
+    since it would force [α = β], contradicting [distinct_lhs]. *)
+Theorem diamond (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+  forall N N1 N2, step A S N N1 -> step A S N N2 ->
+    { M : Net A & step_star_iso A S N1 M * step_star_iso A S N2 M }.
+Proof.
+  intros N N1 N2 Hs1 Hs2.
+  set (Ar := sys_arity S).
+  destruct Hs1 as [N N1 a b α β r1 Hwf Hap_ab Hla Hlb Hr1 Hlhs1 Hiso1].
+  destruct Hs2 as [N N2 c d γ δ r2 _ Hap_cd Hlc Hld Hr2 Hlhs2 Hiso2].
+  (* The destructs consumed the original step hypotheses; rebuild them from
+     the extracted data (both steps fire on the same [N], so [Hwf] serves
+     both). Needed by [step_pres_wf] in the disjoint case. *)
+  assert (Hs1 : step A S N N1).
+  { exact (step_intro A S N N1 a b α β r1 Hwf Hap_ab Hla Hlb Hr1 Hlhs1 Hiso1). }
+  assert (Hs2 : step A S N N2).
+  { exact (step_intro A S N N2 c d γ δ r2 Hwf Hap_cd Hlc Hld Hr2 Hlhs2 Hiso2). }
+  set (R1 := raw_splice A Ar N a b r1).
+  destruct (active_pairs_trichotomy A Ar N Hwf a b c d Hap_ab Hap_cd)
+    as [Hac Hbd|Had Hbc|Hdisj].
+  (* ==================== Case 1: same pair (a = c, b = d) ==================== *)
+  - { subst c. subst d.
+    assert (Hαγ : α = γ).
+    { rewrite Hla in Hlc. injection Hlc as Hαγ'. exact Hαγ'. }
+    subst γ.
+    assert (Hδβ : β = δ).
+    { rewrite Hlb in Hld. injection Hld as Hδβ'. exact Hδβ'. }
+    subst δ.
+    rewrite Hr1 in Hr2.
+    injection Hr2 as Hr12.
+    subst r2.
+    (* Now R1 = R2; both N1 and N2 are isomorphic to R1. *)
+    assert (Hrhs1 : well_formed A Ar (ru_rhs r1)).
+    { exact (sys_valid_wf A S α β r1 Hr1). }
+    assert (Hiface1 : ru_iface r1 = interface A Ar (ru_rhs r1)).
+    { exact (sys_valid_iface A S α β r1 Hr1). }
+    assert (Hlen1 := sys_valid_len A S α β r1 Hr1).
+    rewrite !Hlhs1 in Hlen1. simpl in Hlen1.
+    assert (Hwf_R1 : well_formed A Ar R1).
+    { exact (raw_splice_wf A Ar N a b r1 α β Hla Hlb Hlhs1 Hwf Hap_ab Hrhs1 Hiface1 Hlen1). }
+    exists R1.
+    split.
+    - exists N1.
+      split.
+      + exact (step_star_refl A S N1).
+      + exact (net_iso_symmetric A Ar R1 N1 Hiso1 Hwf_R1).
+    - exists N2.
+      split.
+      + exact (step_star_refl A S N2).
+      + exact (net_iso_symmetric A Ar R1 N2 Hiso2 Hwf_R1). }
+  (* ==================== Case 2: swapped pair (a = d, b = c) ==================== *)
+  - { subst d. subst c.
+    assert (Hβγ : β = γ).
+    { rewrite Hlb in Hlc. injection Hlc as Hβγ'. exact Hβγ'. }
+    subst γ.
+    assert (Hαδ : α = δ).
+    { rewrite Hla in Hld. injection Hld as Hαδ'. exact Hαδ'. }
+    subst δ.
+    (* Hr2 : sys_rules S β α = Some r2; by symmetry of the rule table,
+       sys_rules S β α = sys_rules S α β, so r2 = r1. *)
+    rewrite (sys_sym S β α) in Hr2.
+    rewrite Hr1 in Hr2.
+    injection Hr2 as Hr12.
+    subst r2.
+    (* Hlhs2 : ru_lhs r1 = (β, α); with Hlhs1 : ru_lhs r1 = (α, β),
+       this forces α = β, contradicting distinct_lhs. *)
+    rewrite Hlhs1 in Hlhs2.
+    injection Hlhs2 as Hαβ Hβα.
+    exfalso.
+    apply (Hdl α β r1 Hr1).
+    rewrite Hlhs1. simpl.
+    exact Hαβ. }
+  (* ==================== Case 3: disjoint pairs ==================== *)
+  - { (* Fire r1 then r2 (or r2 then r1); the two double splices are
+         isomorphic by step_commuting. *)
+    set (scN1 := sc_N1 A Ar N a b r1).
+    set (scN2 := sc_N2 A Ar N c d r2).
+    set (scN12 := sc_N12 A Ar N a b c d r1 r2).
+    set (scN21 := sc_N21 A Ar N a b c d r1 r2).
+    set (c' := @ni_map A Ar scN1 N1 Hiso1 c).
+    set (d' := @ni_map A Ar scN1 N1 Hiso1 d).
+    set (a' := @ni_map A Ar scN2 N2 Hiso2 a).
+    set (b' := @ni_map A Ar scN2 N2 Hiso2 b).
+    (* System validity of the two rules. *)
+    assert (Hrhs1 : well_formed A Ar (ru_rhs r1)).
+    { exact (sys_valid_wf A S α β r1 Hr1). }
+    assert (Hiface1 : ru_iface r1 = interface A Ar (ru_rhs r1)).
+    { exact (sys_valid_iface A S α β r1 Hr1). }
+    assert (Hlen1_eq := sys_valid_len A S α β r1 Hr1).
+    rewrite !Hlhs1 in Hlen1_eq. simpl in Hlen1_eq.
+    (* Hlen1_eq : length (ru_iface r1) = Ar α + Ar β. *)
+    assert (Hlen1_fst : length (ru_iface r1) = Ar (fst (ru_lhs r1)) + Ar (snd (ru_lhs r1))).
+    { exact (sys_valid_len A S α β r1 Hr1). }
+    assert (Hlen1_le : Ar (fst (ru_lhs r1)) + Ar (snd (ru_lhs r1)) <= length (ru_iface r1)).
+    { rewrite Hlen1_fst. lia. }
+    assert (Hrhs2 : well_formed A Ar (ru_rhs r2)).
+    { exact (sys_valid_wf A S γ δ r2 Hr2). }
+    assert (Hiface2 : ru_iface r2 = interface A Ar (ru_rhs r2)).
+    { exact (sys_valid_iface A S γ δ r2 Hr2). }
+    assert (Hlen2_fst : length (ru_iface r2) = Ar (fst (ru_lhs r2)) + Ar (snd (ru_lhs r2))).
+    { exact (sys_valid_len A S γ δ r2 Hr2). }
+    (* The LHS components of each rule. *)
+    assert (Hf1 : fst (ru_lhs r1) = α). { rewrite Hlhs1. reflexivity. }
+    assert (Hs1l : snd (ru_lhs r1) = β). { rewrite Hlhs1. reflexivity. }
+    assert (Hf2 : fst (ru_lhs r2) = γ). { rewrite Hlhs2. reflexivity. }
+    assert (Hs2l : snd (ru_lhs r2) = δ). { rewrite Hlhs2. reflexivity. }
+    assert (Hlen2_γδ : length (ru_iface r2) = Ar γ + Ar δ).
+    { rewrite Hf2, Hs2l in Hlen2_fst. exact Hlen2_fst. }
+    (* Orientation premises for step_commuting. *)
+    assert (Hol1 : agent_label A N a = Some (fst (ru_lhs r1))).
+    { rewrite <- Hf1 in Hla. exact Hla. }
+    assert (Hol2 : agent_label A N b = Some (snd (ru_lhs r1))).
+    { rewrite <- Hs1l in Hlb. exact Hlb. }
+    assert (Hol3 : agent_label A N c = Some (fst (ru_lhs r2))).
+    { rewrite <- Hf2 in Hlc. exact Hlc. }
+    assert (Hol4 : agent_label A N d = Some (snd (ru_lhs r2))).
+    { rewrite <- Hs2l in Hld. exact Hld. }
+    (* The single splices are well-formed. *)
+    assert (Hwf_scN1 : well_formed A Ar scN1).
+    { exact (raw_splice_wf A Ar N a b r1 α β Hla Hlb Hlhs1 Hwf Hap_ab Hrhs1 Hiface1 Hlen1_eq). }
+    assert (Hwf_scN2 : well_formed A Ar scN2).
+    { exact (raw_splice_wf A Ar N c d r2 γ δ Hlc Hld Hlhs2 Hwf Hap_cd Hrhs2 Hiface2 Hlen2_γδ). }
+    (* The four agents of the two pairs, and the disjointness inequalities. *)
+    assert (Ha : has_agent A N a).
+    { change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+      exact (proj1 (proj2 Hap_ab)). }
+    assert (Hb : has_agent A N b).
+    { change (a <> b /\ has_agent A N a /\ has_agent A N b /\ has_link A N (a, 0) (b, 0)) in Hap_ab.
+      exact (proj1 (proj2 (proj2 Hap_ab))). }
+    assert (Hc : has_agent A N c).
+    { change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+      exact (proj1 (proj2 Hap_cd)). }
+    assert (Hd : has_agent A N d).
+    { change (c <> d /\ has_agent A N c /\ has_agent A N d /\ has_link A N (c, 0) (d, 0)) in Hap_cd.
+      exact (proj1 (proj2 (proj2 Hap_cd))). }
+    assert (Hac : a <> c). { exact (proj1 Hdisj). }
+    assert (Had : a <> d). { exact (proj1 (proj2 Hdisj)). }
+    assert (Hbc : b <> c). { exact (proj1 (proj2 (proj2 Hdisj))). }
+    assert (Hbd : b <> d). { exact (proj2 (proj2 (proj2 Hdisj))). }
+    assert (Hca : c <> a). { intro H. apply Hac. symmetry. exact H. }
+    assert (Hcb : c <> b). { intro H. apply Hbc. symmetry. exact H. }
+    assert (Hda : d <> a). { intro H. apply Had. symmetry. exact H. }
+    assert (Hdb : d <> b). { intro H. apply Hbd. symmetry. exact H. }
+    (* The flipped disjointness, for firing (c, d) with survivors (a, b). *)
+    assert (Hdisj2 : c <> a /\ c <> b /\ d <> a /\ d <> b).
+    { split; [exact Hca | split; [exact Hcb | split; [exact Hda | exact Hdb]]]. }
+    (* The surviving agents in the single splices. *)
+    assert (Hc_scN1 : has_agent A scN1 c).
+    { exact (raw_splice_pres_agent A Ar N a b c r1 Hc Hca Hcb). }
+    assert (Hd_scN1 : has_agent A scN1 d).
+    { exact (raw_splice_pres_agent A Ar N a b d r1 Hd Hda Hdb). }
+    assert (Ha_scN2 : has_agent A scN2 a).
+    { exact (raw_splice_pres_agent A Ar N c d a r2 Ha Hac Had). }
+    assert (Hb_scN2 : has_agent A scN2 b).
+    { exact (raw_splice_pres_agent A Ar N c d b r2 Hb Hbc Hbd). }
+    (* The surviving labels in the single splices. *)
+    assert (Hlc_scN1 : agent_label A scN1 c = Some (fst (ru_lhs r2))).
+    { assert (Heq : agent_label A scN1 c = agent_label A N c).
+      { exact (raw_splice_pres_label A Ar N Hwf a b c r1 Hc Hca Hcb). }
+      rewrite Heq, Hlc.
+      rewrite <- Hf2.
+      reflexivity. }
+    assert (Hld_scN1 : agent_label A scN1 d = Some (snd (ru_lhs r2))).
+    { assert (Heq : agent_label A scN1 d = agent_label A N d).
+      { exact (raw_splice_pres_label A Ar N Hwf a b d r1 Hd Hda Hdb). }
+      rewrite Heq, Hld.
+      rewrite <- Hs2l.
+      reflexivity. }
+    assert (Hla_scN2 : agent_label A scN2 a = Some (fst (ru_lhs r1))).
+    { assert (Heq : agent_label A scN2 a = agent_label A N a).
+      { exact (raw_splice_pres_label A Ar N Hwf c d a r2 Ha Hac Had). }
+      rewrite Heq, Hla.
+      rewrite <- Hf1.
+      reflexivity. }
+    assert (Hlb_scN2 : agent_label A scN2 b = Some (snd (ru_lhs r1))).
+    { assert (Heq : agent_label A scN2 b = agent_label A N b).
+      { exact (raw_splice_pres_label A Ar N Hwf c d b r2 Hb Hbc Hbd). }
+      rewrite Heq, Hlb.
+      rewrite <- Hs1l.
+      reflexivity. }
+    (* The other pair is still active in each single splice. *)
+    assert (Hap_scN1 : is_active_pair A Ar scN1 c d).
+    { exact (raw_splice_pres_pair A Ar N a b c d r1 Hwf Hap_ab Hap_cd Hdisj). }
+    assert (Hap_scN2 : is_active_pair A Ar scN2 a b).
+    { exact (raw_splice_pres_pair A Ar N c d a b r2 Hwf Hap_cd Hap_ab Hdisj2). }
+    (* Reflexive LHS facts. *)
+    assert (Hlhs1' : ru_lhs r1 = (fst (ru_lhs r1), snd (ru_lhs r1))).
+    { rewrite Hf1, Hs1l, Hlhs1. reflexivity. }
+    assert (Hlhs2' : ru_lhs r2 = (fst (ru_lhs r2), snd (ru_lhs r2))).
+    { rewrite Hf2, Hs2l, Hlhs2. reflexivity. }
+    (* The double splices are well-formed. *)
+    assert (Hwf_scN12 : well_formed A Ar scN12).
+    { exact (raw_splice_wf A Ar scN1 c d r2 (fst (ru_lhs r2)) (snd (ru_lhs r2))
+             Hlc_scN1 Hld_scN1 Hlhs2' Hwf_scN1 Hap_scN1 Hrhs2 Hiface2 Hlen2_fst). }
+    assert (Hwf_scN21 : well_formed A Ar scN21).
+    { exact (raw_splice_wf A Ar scN2 a b r1 (fst (ru_lhs r1)) (snd (ru_lhs r1))
+             Hla_scN2 Hlb_scN2 Hlhs1' Hwf_scN2 Hap_scN2 Hrhs1 Hiface1 Hlen1_fst). }
+    (* ---- The step N1 -> scN12 (fire r2 on the image of c, d in N1) ---- *)
+    assert (Hap_N1 : is_active_pair A Ar N1 c' d').
+    { exact (step_preserves_pair A S N N1 a b c d r1 Hiso1 Hwf Hap_ab Hap_cd Hdisj). }
+    assert (Hwf_N1 : well_formed A Ar N1).
+    { exact (step_pres_wf A S N N1 Hs1). }
+    assert (Hc_N1 : has_agent A N1 c').
+    { unfold c'.
+      exact (net_iso_agent_fwd A Ar scN1 N1 Hiso1 c Hc_scN1). }
+    assert (Hd_N1 : has_agent A N1 d').
+    { unfold d'.
+      exact (net_iso_agent_fwd A Ar scN1 N1 Hiso1 d Hd_scN1). }
+    assert (Hlc_N1 : agent_label A N1 c' = Some (fst (ru_lhs r2))).
+    { unfold c'.
+      assert (Heq : agent_label A N1 (@ni_map A Ar scN1 N1 Hiso1 c) = agent_label A scN1 c).
+      { exact (net_iso_label A Ar scN1 N1 Hiso1 Hwf_scN1 c Hc_scN1). }
+      rewrite Heq.
+      exact Hlc_scN1. }
+    assert (Hld_N1 : agent_label A N1 d' = Some (snd (ru_lhs r2))).
+    { unfold d'.
+      assert (Heq : agent_label A N1 (@ni_map A Ar scN1 N1 Hiso1 d) = agent_label A scN1 d).
+      { exact (net_iso_label A Ar scN1 N1 Hiso1 Hwf_scN1 d Hd_scN1). }
+      rewrite Heq.
+      exact Hld_scN1. }
+    assert (Hr2' : sys_rules S (fst (ru_lhs r2)) (snd (ru_lhs r2)) = Some r2).
+    { rewrite <- Hf2, <- Hs2l in Hr2. exact Hr2. }
+    assert (Hsp : net_iso A Ar scN12 (raw_splice A Ar N1 c' d' r2)).
+    { exact (raw_splice_iso_compat A Ar scN1 N1 Hiso1 c d r2 Hc_scN1 Hd_scN1 Hwf_scN1). }
+    assert (Hsp' : net_iso A Ar (raw_splice A Ar N1 c' d' r2) scN12).
+    { exact (net_iso_symmetric A Ar scN12 (raw_splice A Ar N1 c' d' r2) Hsp Hwf_scN12). }
+    assert (Hstep_N1 : step A S N1 scN12).
+    { refine (step_intro A S N1 scN12 c' d' (fst (ru_lhs r2)) (snd (ru_lhs r2)) r2
+             Hwf_N1 Hap_N1 Hlc_N1 Hld_N1 Hr2' Hlhs2' Hsp'). }
+    (* ---- The step N2 -> scN21 (fire r1 on the image of a, b in N2) ---- *)
+    assert (Hap_N2 : is_active_pair A Ar N2 a' b').
+    { exact (step_preserves_pair A S N N2 c d a b r2 Hiso2 Hwf Hap_cd Hap_ab Hdisj2). }
+    assert (Hwf_N2 : well_formed A Ar N2).
+    { exact (step_pres_wf A S N N2 Hs2). }
+    assert (Ha_N2 : has_agent A N2 a').
+    { unfold a'.
+      exact (net_iso_agent_fwd A Ar scN2 N2 Hiso2 a Ha_scN2). }
+    assert (Hb_N2 : has_agent A N2 b').
+    { unfold b'.
+      exact (net_iso_agent_fwd A Ar scN2 N2 Hiso2 b Hb_scN2). }
+    assert (Hla_N2 : agent_label A N2 a' = Some (fst (ru_lhs r1))).
+    { unfold a'.
+      assert (Heq : agent_label A N2 (@ni_map A Ar scN2 N2 Hiso2 a) = agent_label A scN2 a).
+      { exact (net_iso_label A Ar scN2 N2 Hiso2 Hwf_scN2 a Ha_scN2). }
+      rewrite Heq.
+      exact Hla_scN2. }
+    assert (Hlb_N2 : agent_label A N2 b' = Some (snd (ru_lhs r1))).
+    { unfold b'.
+      assert (Heq : agent_label A N2 (@ni_map A Ar scN2 N2 Hiso2 b) = agent_label A scN2 b).
+      { exact (net_iso_label A Ar scN2 N2 Hiso2 Hwf_scN2 b Hb_scN2). }
+      rewrite Heq.
+      exact Hlb_scN2. }
+    assert (Hr1' : sys_rules S (fst (ru_lhs r1)) (snd (ru_lhs r1)) = Some r1).
+    { rewrite <- Hf1, <- Hs1l in Hr1. exact Hr1. }
+    assert (Hsp2 : net_iso A Ar scN21 (raw_splice A Ar N2 a' b' r1)).
+    { exact (raw_splice_iso_compat A Ar scN2 N2 Hiso2 a b r1 Ha_scN2 Hb_scN2 Hwf_scN2). }
+    assert (Hsp2' : net_iso A Ar (raw_splice A Ar N2 a' b' r1) scN21).
+    { exact (net_iso_symmetric A Ar scN21 (raw_splice A Ar N2 a' b' r1) Hsp2 Hwf_scN21). }
+    assert (Hstep_N2 : step A S N2 scN21).
+    { refine (step_intro A S N2 scN21 a' b' (fst (ru_lhs r1)) (snd (ru_lhs r1)) r1
+             Hwf_N2 Hap_N2 Hla_N2 Hlb_N2 Hr1' Hlhs1' Hsp2'). }
+    (* ---- The diamond: M = scN12; N2 reaches it via scN21 ≈ scN12 ---- *)
+    exists scN12.
+    split.
+    - exists scN12.
+      split.
+      + exact (step_star_cons A S N1 scN12 scN12 Hstep_N1 (step_star_refl A S scN12)).
+      + exact (net_iso_reflexive A Ar scN12).
+    - exists scN21.
+      split.
+      + exact (step_star_cons A S N2 scN21 scN21 Hstep_N2 (step_star_refl A S scN21)).
+      + exact (net_iso_symmetric A Ar scN12 scN21
+               (step_commuting A Ar N a b c d r1 r2 Hwf Hap_ab Hap_cd Hdisj
+                 Hrhs1 Hiface1 Hol1 Hol2 Hol3 Hol4 Hlen1_le)
+               Hwf_scN12). }
+Qed.
