@@ -6844,10 +6844,51 @@ Qed.
     general (the two splices can be non-isomorphic normal forms). Spec §4.4
     says rules are for *unordered* pairs, so such a rule must be symmetric
     under swapping the two interface halves; our encoding does not enforce
-    that symmetry, so we exclude these rules instead. *)
+    that symmetry. The general condition that makes the swapped case joinable
+    is [orientation_symmetric] (the two splices are isomorphic); [distinct_lhs]
+    is a convenient sufficient special case of it. *)
 Definition distinct_lhs (A : Type) (S : System A) : Prop :=
   forall α β (r : Rule A), sys_rules S α β = Some r ->
     fst (ru_lhs r) <> snd (ru_lhs r).
+
+(** [orientation_symmetric A S] is the minimal condition under which the
+    diamond's swapped-orientation subcase — firing ([a], [b]) versus ([b], [a])
+    with a rule whose LHS is [(α, α)] — is joinable: for every same-label rule
+    [r] (i.e. [sys_rules S α α = Some r]) and every net in which it fires on an
+    active pair ([a], [b]), the two raw splices are isomorphic.
+
+    This is strictly weaker than [distinct_lhs] (which forbids same-label rules
+    outright): [distinct_lhs] implies [orientation_symmetric] vacuously (see
+    [distinct_lhs_implies_orientation_symmetric]). It is the condition the
+    λ-calculus satisfies — its [δ ⊗ δ] rule's RHS is symmetric under swapping
+    the two interface halves — so NF-uniqueness (4.7(2)) extends to systems
+    with same-label pairs. *)
+Definition orientation_symmetric (A : Type) (S : System A) : Type :=
+  forall (N : Net A) (a b : nat) (α : A) (r : Rule A),
+    sys_rules S α α = Some r ->
+    is_active_pair A (sys_arity S) N a b ->
+    net_iso A (sys_arity S) (raw_splice A (sys_arity S) N a b r)
+                                 (raw_splice A (sys_arity S) N b a r).
+
+(** [distinct_lhs] is a convenient sufficient condition for
+    [orientation_symmetric]: when no rule has a same-label LHS, the
+    quantification over same-label rules is empty, so the condition holds
+    vacuously. *)
+Definition distinct_lhs_implies_orientation_symmetric (A : Type) (S : System A)
+      (Hdl : distinct_lhs A S) : orientation_symmetric A S.
+Proof.
+  intros N a b α r Hr Hap.
+  assert (Hneq : fst (ru_lhs r) <> snd (ru_lhs r)).
+  { exact (Hdl α α r Hr). }
+  (* sys_valid_lhs gives ru_lhs r = (α, α) (both disjuncts coincide). *)
+  assert (Hlhs : ru_lhs r = (α, α)).
+  { destruct (sys_valid_lhs A S α α r Hr) as [H|H]; exact H. }
+  assert (Hf : fst (ru_lhs r) = α). { rewrite Hlhs. reflexivity. }
+  assert (Hs : snd (ru_lhs r) = α). { rewrite Hlhs. reflexivity. }
+  exfalso.
+  apply Hneq.
+  rewrite Hs. exact Hf.
+Qed.
 
 (**************************************************************************)
 (** ** Trichotomy of two active pairs *)
@@ -6973,10 +7014,12 @@ Qed.
     [step_star_iso]). The conclusion is a [Type]-sorted sig (with [∗])
     because [step_star_iso] is [Type]-sorted.
 
-    Requires [distinct_lhs S]: the swapped-orientation subcase (firing
-    [a, b] versus [b, a] with a rule whose LHS is [(α, α)]) is excluded,
-    since it would force [α = β], contradicting [distinct_lhs]. *)
-Theorem diamond (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+    Requires [orientation_symmetric S]: the swapped-orientation subcase (firing
+    [a, b] versus [b, a] with a rule whose LHS is [(α, α)]) forces [α = β],
+    and the two splices are then isomorphic by [orientation_symmetric].
+    [distinct_lhs S] is a convenient sufficient condition (see
+    [distinct_lhs_implies_orientation_symmetric]). *)
+Theorem diamond (A : Type) (S : System A) (Hos : orientation_symmetric A S) :
   forall N N1 N2, step A S N N1 -> step A S N N2 ->
     { M : Net A & step_star_iso A S N1 M * step_star_iso A S N2 M }.
 Proof.
@@ -7039,13 +7082,40 @@ Proof.
     injection Hr2 as Hr12.
     subst r2.
     (* Hlhs2 : ru_lhs r1 = (β, α); with Hlhs1 : ru_lhs r1 = (α, β),
-       this forces α = β, contradicting distinct_lhs. *)
+       this forces α = β: both agents carry label α, and r1 is the
+       same-label rule. *)
     rewrite Hlhs1 in Hlhs2.
     injection Hlhs2 as Hαβ Hβα.
-    exfalso.
-    apply (Hdl α β r1 Hr1).
-    rewrite Hlhs1. simpl.
-    exact Hαβ. }
+    subst β.
+    (* System validity of the (now same-label) rule r1. *)
+    assert (Hrhs1 : well_formed A Ar (ru_rhs r1)).
+    { exact (sys_valid_wf A S α α r1 Hr1). }
+    assert (Hiface1 : ru_iface r1 = interface A Ar (ru_rhs r1)).
+    { exact (sys_valid_iface A S α α r1 Hr1). }
+    assert (Hlen1 := sys_valid_len A S α α r1 Hr1).
+    rewrite !Hlhs1 in Hlen1. simpl in Hlen1.
+    (* Well-formedness of the two splices (needed to invert the isos). *)
+    assert (Hwf_R1 : well_formed A Ar R1).
+    { exact (raw_splice_wf A Ar N a b r1 α α Hla Hlb Hlhs1 Hwf Hap_ab
+             Hrhs1 Hiface1 Hlen1). }
+    assert (Hwf_R2 : well_formed A Ar (raw_splice A Ar N b a r1)).
+    { exact (raw_splice_wf A Ar N b a r1 α α Hlb Hla Hlhs1 Hwf Hap_cd
+             Hrhs1 Hiface1 Hlen1). }
+    (* orientation_symmetric: the two splices are isomorphic. *)
+    assert (Hswap : net_iso A Ar R1 (raw_splice A Ar N b a r1)).
+    { exact (Hos N a b α r1 Hr1 Hap_ab). }
+    exists R1.
+    split.
+    - exists N1.
+      split.
+      + exact (step_star_refl A S N1).
+      + exact (net_iso_symmetric A Ar R1 N1 Hiso1 Hwf_R1).
+    - exists N2.
+      split.
+      + exact (step_star_refl A S N2).
+      + exact (net_iso_transitive A Ar N2 (raw_splice A Ar N b a r1) R1
+               (net_iso_symmetric A Ar (raw_splice A Ar N b a r1) N2 Hiso2 Hwf_R2)
+               (net_iso_symmetric A Ar R1 (raw_splice A Ar N b a r1) Hswap Hwf_R1)). }
   (* ==================== Case 3: disjoint pairs ==================== *)
   - { (* Fire r1 then r2 (or r2 then r1); the two double splices are
          isomorphic by step_commuting. *)
@@ -7359,7 +7429,7 @@ Qed.
     analysis as [diamond]; only the final packaging differs: the same-pair
     case is a zero-step iso, the disjoint case is a single step on each side
     (the two double splices being isomorphic by [step_commuting]). *)
-Theorem diamond_atmost1 (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+Theorem diamond_atmost1 (A : Type) (S : System A) (Hos : orientation_symmetric A S) :
   forall N N1 N2, step A S N N1 -> step A S N N2 ->
     { M : Net A & atmost1_step_iso A S N1 M * atmost1_step_iso A S N2 M }.
 Proof.
@@ -7416,13 +7486,34 @@ Proof.
     injection Hr2 as Hr12.
     subst r2.
     (* Hlhs2 : ru_lhs r1 = (β, α); with Hlhs1 : ru_lhs r1 = (α, β),
-       this forces α = β, contradicting distinct_lhs. *)
+       this forces α = β: both agents carry label α, and r1 is the
+       same-label rule. *)
     rewrite Hlhs1 in Hlhs2.
     injection Hlhs2 as Hαβ Hβα.
-    exfalso.
-    apply (Hdl α β r1 Hr1).
-    rewrite Hlhs1. simpl.
-    exact Hαβ. }
+    subst β.
+    (* System validity of the (now same-label) rule r1. *)
+    assert (Hrhs1 : well_formed A Ar (ru_rhs r1)).
+    { exact (sys_valid_wf A S α α r1 Hr1). }
+    assert (Hiface1 : ru_iface r1 = interface A Ar (ru_rhs r1)).
+    { exact (sys_valid_iface A S α α r1 Hr1). }
+    assert (Hlen1 := sys_valid_len A S α α r1 Hr1).
+    rewrite !Hlhs1 in Hlen1. simpl in Hlen1.
+    (* Well-formedness of the two splices (needed to invert the isos). *)
+    assert (Hwf_R1 : well_formed A Ar R1).
+    { exact (raw_splice_wf A Ar N a b r1 α α Hla Hlb Hlhs1 Hwf Hap_ab
+             Hrhs1 Hiface1 Hlen1). }
+    assert (Hwf_R2 : well_formed A Ar (raw_splice A Ar N b a r1)).
+    { exact (raw_splice_wf A Ar N b a r1 α α Hlb Hla Hlhs1 Hwf Hap_cd
+             Hrhs1 Hiface1 Hlen1). }
+    (* orientation_symmetric: the two splices are isomorphic. *)
+    assert (Hswap : net_iso A Ar R1 (raw_splice A Ar N b a r1)).
+    { exact (Hos N a b α r1 Hr1 Hap_ab). }
+    exists R1.
+    split.
+    - exact (inl (net_iso_symmetric A Ar R1 N1 Hiso1 Hwf_R1)).
+    - exact (inl (net_iso_transitive A Ar N2 (raw_splice A Ar N b a r1) R1
+               (net_iso_symmetric A Ar (raw_splice A Ar N b a r1) N2 Hiso2 Hwf_R2)
+               (net_iso_symmetric A Ar R1 (raw_splice A Ar N b a r1) Hswap Hwf_R1))). }
   (* ==================== Case 3: disjoint pairs ==================== *)
   - { (* Fire r1 then r2 (or r2 then r1); the two double splices are
          isomorphic by step_commuting. *)
@@ -7652,7 +7743,7 @@ Qed.
     The star is introduced before the step: the induction hypothesis must be
     polymorphic in the step's target, which requires the step to be a
     hypothesis at the point of the induction. *)
-Lemma step_star_peak (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+Lemma step_star_peak (A : Type) (S : System A) (Hos : orientation_symmetric A S) :
   forall N N2, step_star A S N N2 ->
     forall N1, step A S N N1 ->
       { M : Net A & step_star_iso A S N1 M * step_star_iso A S N2 M }.
@@ -7670,7 +7761,7 @@ Proof.
       exact (pair (step_star_step A S N N1 Hstep1) (net_iso_reflexive A Ar N1)).
   - { (* Inductive: N -> N' ->* N2. *)
       intros N1 Hstep1.
-      destruct (diamond_atmost1 A S Hdl N N1 N' Hstep1 Hstep) as [M [Ham1 Ham2]].
+      destruct (diamond_atmost1 A S Hos N N1 N' Hstep1 Hstep) as [M [Ham1 Ham2]].
       destruct Ham2 as [Hiso | Hsig].
       - { (* N' ~= M (the diamond's zero-step case). *)
         assert (HwfN' : well_formed A Ar N').
@@ -7729,7 +7820,7 @@ Qed.
     inductive case moves the first star across the first step of the second
     via the step-vs-star peak lemma ([step_star_peak]) and then applies the
     induction hypothesis. *)
-Theorem confluence (A : Type) (S : System A) (Hdl : distinct_lhs A S) :
+Theorem confluence (A : Type) (S : System A) (Hos : orientation_symmetric A S) :
   forall N N2, step_star A S N N2 ->
     forall N1, step_star A S N N1 ->
       { M : Net A & step_star_iso A S N1 M * step_star_iso A S N2 M }.
@@ -7746,7 +7837,7 @@ Proof.
     + exact (star_to_star_iso A S N N1 Hstar1).
   - (* Inductive: N -> N' ->* N2. *)
     intros N1 Hstar1.
-    destruct (step_star_peak A S Hdl N N1 Hstar1 N' Hstep) as [M [HM' HM1]].
+    destruct (step_star_peak A S Hos N N1 Hstar1 N' Hstep) as [M [HM' HM1]].
     destruct HM' as [M2 [HstarM2 Hiso2]].
     destruct (IH M2 HstarM2) as [K [HK1 HK2]].
     assert (HwfN : well_formed A Ar N).
@@ -7794,7 +7885,7 @@ Qed.
     The starting net [N] is assumed well-formed: composing the two isomorphisms
     through [M] requires the symmetry of one of them, which in turn requires
     well-formedness. *)
-Theorem nf_unique (A : Type) (S : System A) (Hdl : distinct_lhs A S)
+Theorem nf_unique (A : Type) (S : System A) (Hos : orientation_symmetric A S)
       (N : Net A) (HwfN : well_formed A (sys_arity S) N) :
   forall N1 N2, step_star A S N N1 -> step_star A S N N2 ->
     is_normal_form A (sys_arity S) N1 -> is_normal_form A (sys_arity S) N2 ->
@@ -7802,7 +7893,7 @@ Theorem nf_unique (A : Type) (S : System A) (Hdl : distinct_lhs A S)
 Proof.
   set (Ar := sys_arity S).
   intros N1 N2 Hstar1 Hstar2 Hnf1 Hnf2.
-  destruct (confluence A S Hdl N N2 Hstar2 N1 Hstar1) as [M [HM1 HM2]].
+  destruct (confluence A S Hos N N2 Hstar2 N1 Hstar1) as [M [HM1 HM2]].
   destruct HM1 as [M1 [Hstar1' Hiso1]].
   destruct HM2 as [M2 [Hstar2' Hiso2]].
   assert (HM1eq : M1 = N1).
