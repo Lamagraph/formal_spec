@@ -269,6 +269,7 @@ Definition link_end_b (l : port_ref * port_ref) (pr : port_ref) : bool :=
 Definition port_used_b (A : Type) (N : Net A) (pr : port_ref) : bool :=
   existsb (fun l => link_end_b l pr) (nt_links N).
 
+(** Boolean mirror of [link_end]: [link_end_b l pr = true] iff [link_end l pr]. *)
 Lemma link_end_b_spec (l : port_ref * port_ref) (pr : port_ref) :
   link_end_b l pr = true <-> link_end l pr.
 Proof.
@@ -284,6 +285,8 @@ Proof.
     + right. injection H as -> ->. split; reflexivity.
 Qed.
 
+(** Boolean mirror of [port_used]: [port_used_b A N pr = true] iff
+    [port_used A N pr]. *)
 Lemma port_used_b_spec (A : Type) (N : Net A) (pr : port_ref) :
   port_used_b A N pr = true <-> port_used A N pr.
 Proof.
@@ -395,6 +398,8 @@ Proof.
   - rewrite (H x y) in Hy. exact Hy.
 Qed.
 
+(** Sortedness is preserved when the ordering relation is replaced by an
+    equivalent one. *)
 Lemma Sorted_rel_change (A : Type) (R R' : A -> A -> Prop) (l : list A)
       (H : forall x y, R x y <-> R' x y) :
   Sorted.Sorted R l -> Sorted.Sorted R' l.
@@ -901,6 +906,7 @@ Qed.
 Definition max_agent_id (A : Type) (N : Net A) : nat :=
   list_max (map fst (nt_agents N)).
 
+(** Transitivity of [<=] on [nat]. *)
 Lemma nat_le_trans (a b c : nat) : a <= b -> b <= c -> a <= c.
 Proof.
   intros H1 H2. induction H2 as [|c' Hc' IH].
@@ -908,6 +914,7 @@ Proof.
   - apply (le_S a c'). exact IH.
 Qed.
 
+(** An element of a list is at most its [list_max]. *)
 Lemma list_max_upper_bound (l : list nat) (x : nat) :
   In x l -> x <= list_max l.
 Proof.
@@ -920,6 +927,7 @@ Proof.
       * simpl. apply Nat.le_max_r.
 Qed.
 
+(** [max_agent_id A N + 1] is not an agent id of [N]. *)
 Lemma max_agent_id_notin (A : Type) (N : Net A) :
   ~ has_agent A N (max_agent_id A N + 1).
 Proof.
@@ -1223,6 +1231,8 @@ Proof.
     + exact (ni_links H).
 Qed.
 
+(** The [Equivalence] instance for [net_iso_on_wfnet]: [net_iso] is
+    reflexive, symmetric, and transitive on well-formed nets. *)
 Instance net_iso_equivalence (A : Type) (Ar : A -> nat) :
   Equivalence (net_iso_on_wfnet A Ar).
 Proof.

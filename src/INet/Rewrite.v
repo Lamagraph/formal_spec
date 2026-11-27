@@ -391,6 +391,9 @@ Proof.
   ).
 Qed.
 
+(** The main–main-link test is orientation-independent: the swapped link
+    [((a2, 0), (a1, 0))] is also recognized as the main–main link of
+    ([a1], [a2]). *)
 Lemma is_main_main_link_neg (a1 a2 : nat) :
   is_main_main_link a1 a2 ((a2, 0), (a1, 0)) = true.
 Proof.
@@ -6923,6 +6926,9 @@ Proof.
   discriminate H.
 Qed.
 
+(** Decision procedure for [pair_trichotomy]: given two active pairs of a
+    well-formed net, produce the witness that they are the same, the
+    swapped pair, or disjoint. *)
 Lemma active_pairs_trichotomy (A : Type) (Ar : A -> nat) (N : Net A)
       (Hwf : well_formed A Ar N) (a b c d : nat)
       (Hap_ab : is_active_pair A Ar N a b) (Hap_cd : is_active_pair A Ar N c d) :

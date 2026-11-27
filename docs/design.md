@@ -73,12 +73,58 @@ them. Format: a short title, the decision, and the *why*.
   tests are used for *definitions* where random/empirical checking adds value
   (see `docs/developer.md`).
 
+- **INet encoding (task #9).** The interaction-net model is encoded as
+  `Net A = { nt_agents : list (nat * A); nt_links : list (port_ref * port_ref) }`
+  — agents and links as *separate* data (faithful to the graph definition; no
+  symmetry invariant), with `port_ref = nat * nat` (agent id, port number; port
+  `0` = main, `1..n` = aux for arity `n`). A `well_formed A Ar N` predicate
+  enforces unique agent ids, links referencing in-range ports of existing
+  agents, port-injectivity, and distinct link ends. Nets are compared **up to
+  renaming** via an explicit isomorphism `net_iso` (a label- and link-preserving
+  bijection on agents); `step` is defined modulo `net_iso` and every theorem is
+  stated modulo it, so the hard commutation lemma is an *isomorphism to
+  exhibit* (no canonicalization function). The label type `A : Type`, the arity
+  function `Ar : A -> nat`, and the rule table are parameters: every theorem is
+  `forall (A : Type) (S : System A), …`.
+- **Library survey (task #9).** Per "adopt, don't reinvent", no existing
+  Rocq/Coq interaction-net formalization was found, so the model is built on
+  **Stdlib only** (no new opam dependencies): `ReflTransCl` (`→*`),
+  `Relations.Relation_Definitions`, `Classes.RelationalClasses` (`net_iso`),
+  `Lists.Permutation` (commutation), `Perm.Perm` (iso witnesses), and
+  `Arith`/`micromega` (port-index arithmetic). Heavy candidates (category-theory
+  libraries for adhesive categories, and the CoLoR libraries for interaction
+  nets) were surveyed and rejected: none models nets *up to renaming* with an
+  explicit isomorphism, and adopting one would drag in a dependency for a small,
+  self-contained model. Adhesive-category semantics and CoLoR are cited as
+  related work, not dependencies.
+- **Strong confluence + unique NFs (task #9).** The key structural fact is that
+  any two active pairs in a well-formed net are **disjoint** (an active pair
+  joins two agents by their *main* ports, and each agent has exactly one main
+  port). Hence reducing one pair preserves every other active pair, and two
+  reductions at disjoint pairs commute (up to renaming). This yields the
+  one-step diamond, then confluence, then unique normal forms (4.7(2)), for
+  **general rules** (RHS may contain active pairs). The swapped-orientation
+  subcase (firing `(a,b)` vs `(b,a)` of a same-label rule) is joinable under the
+  `orientation_symmetric` condition (the two splices are isomorphic) — strictly
+  weaker than `distinct_lhs`, and satisfied by the λ-calculus (its `δ⊗δ` rule's
+  RHS is symmetric under swapping the two interface halves).
+- **4.7(1) (normalizable ⇒ SN) is an open conjecture (task #9).** The spec's
+  4.7(1) — normalizable nets are strongly normalizable — is *not* proved. It is
+  false for the general model (the λ/Ω loop needs duplication, a same-label
+  LHS), and under the 4.9 restriction (`pair_free_rhs`) it is believed true but
+  unproved: an executable model found no counterexample in 30,000 randomized
+  iterations, and the only diverging constructions are "pump"-like self-
+  sustaining cycles that are immortal (hence not normalizable). The proof is
+  stuck on a global argument (infinite sequence ⇒ pump; normalizable ⇒ no pump)
+  that a net-local well-founded measure cannot supply. Recorded as a conjecture;
+  not part of the delivered result.
+
 ## Open questions
 
-- Exact agent/rule encoding for the target interaction-net calculus (binary
-  agents? explicit rule tables?).
 - Memory model granularity (per-agent cells vs. packed representation).
 - Whether scheduling is specified deterministically or up to a fairness
   condition.
 
-These are to be resolved in the first planning task, not assumed here.
+The agent/rule encoding question is resolved by task #9 (see "INet encoding"
+above). The remaining questions concern the architecture layer and are to be
+resolved in the first architecture task, not assumed here.

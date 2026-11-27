@@ -14,6 +14,10 @@ follow the scheme in the `release` skill.
   rocqdoc output extracted from the `.v` sources plus one start page,
   deployed from `main` at each release
   (`.github/workflows/deploy-docs.yml`).
+- Interaction-net model (`src/INet/`): the abstract semantics (agents, rules,
+  nets up to renaming, the rewrite step) with strong confluence (one-step
+  diamond) and unique normal forms (4.7(2)) under the `orientation_symmetric`
+  condition (which the λ-calculus satisfies).
 
 ### Changed
 - Build system migrated from coq_makefile to **dune + opam** (`dune-project`,
