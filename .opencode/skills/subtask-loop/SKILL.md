@@ -1,12 +1,63 @@
 ---
 name: subtask-loop
-description: Use when executing an atomic subtask from the detailed plan: implement -> prove/test -> document -> pre-commit checks -> quality checks -> commit -> mark done. Covers the full execution cycle, proof-quality checks, commit rules, blocked work protocol, and completion tracking.
+description: Use when executing an atomic subtask from the detailed plan. Every subtask runs in a fresh subagent (sequential, depth 1): the parent composes a self-contained prompt with the accumulated context digest and verifies/ingests the child's structured report; the child runs implement -> prove/test -> document -> pre-commit checks -> quality checks -> commit -> mark done -> report. Covers the execution model, proof-quality checks, commit rules, blocked work protocol, and completion tracking.
 ---
 
 # Subtask Execution Loop
 
 Each atomic subtask from `tasks/detailed_plan.md` is executed as a
-self-contained cycle.
+self-contained cycle — by a **fresh subagent**, not by the parent inline.
+
+## Execution Model
+
+Every subtask — including doc-only ones — is executed by a **fresh
+subagent** spawned by the parent (main) agent.
+
+Rules:
+
+- **Sequential.** One subagent at a time. Start S(n+1) only after S(n)'s
+  subagent has finished and its report has been verified. No concurrency.
+- **Fresh.** Every subtask gets a new subagent. Never continue or reuse a
+  previous child session.
+- **Depth 1.** A subtask subagent must not spawn subagents of its own. No
+  tree-like structure, no parallelism.
+- **The parent is the sole interface to the user.** A subagent that needs a
+  decision reports *Blocked* (see the Blocked Work Protocol); the parent
+  relays the report to the user and feeds the resulting guidance into the
+  next fresh subagent's prompt. Subagents never contact the user directly.
+
+Not delegated: the code review and the quality gate are task-level steps the
+parent performs after all subtasks (see the `code-review` and
+`quality-gates` skills). The per-subtask gate remains `dune build` (child);
+the full gate (rocqchk + `@doc`) remains task-level (parent).
+
+### Parent duties (per subtask)
+
+1. Take the next subtask from `tasks/detailed_plan.md`.
+2. Compose a **self-contained prompt** containing:
+   - the subtask's full spec (Code/Tests/Docs/Spec) from the plan;
+   - task context: issue number, feature branch, commit convention
+     (`<type>(<N>-S<n>)`, with `Closes #<N>` as a standalone line on the last
+     subtask), plan file location;
+   - the **accumulated context digest** — distilled from all prior subtask
+     reports: artifact names/signatures, key invariants, proof techniques
+     that worked, pitfalls/dead ends, module-map changes. The standard: the
+     child must never need to re-investigate what a prior report already
+     states;
+   - the instruction to load this skill, follow the cycle, and end with the
+     structured report.
+3. Spawn the fresh subagent and wait for it to finish.
+4. **Verify the report against reality**: the commit exists with the
+   expected message, `dune build` is green, the plan is marked done, and the
+   mirror is in sync (`python3 scripts/sync_plan_comment.py <N> --check`).
+5. **Ingest the report**: append its "Context for subsequent subtasks" to
+   the accumulated digest used in the next prompt.
+
+### Child duties
+
+Run the cycle below (steps 1–8) exactly, then end with the structured report
+(step 8). The child's final message is the report — the parent receives it
+when the child goes idle.
 
 ## Cycle Steps
 
@@ -26,6 +77,7 @@ When a subtask modifies only `.md` files (no `.v` files), the cycle is adapted:
 | 5. Quality Checks | **Skip** — no code to check |
 | 6. Commit | **Follow exactly** — one commit per subtask, single SN identifier |
 | 7. Mark Done | **Follow exactly** |
+| 8. Report | **Follow exactly** |
 
 The absence of code changes **never** justifies batching multiple subtasks into
 a single commit.
@@ -89,7 +141,34 @@ python3 scripts/sync_plan_comment.py <N>
 
 The local file is the single source of truth; the comment is a pure mirror.
 
-If at any point in steps 1–7 you hit an unresolvable problem that prevents 100%
+### 8. Report
+
+End with a structured report as the final message:
+
+```
+## Subtask Report — S<n>
+
+- **Status:** Resolved | Blocked
+- **Commit:** <hash> (<subject line>)
+- **Artifacts:** names + signatures of the definitions, records, and lemmas
+  introduced or changed (the API surface for subsequent subtasks)
+- **Context for subsequent subtasks:**
+  - invariants / facts established
+  - proof techniques that worked (tactic patterns, lemmas to reuse)
+  - pitfalls / dead ends (what not to retry)
+  - module/file map changes
+- **Gate:** `dune build` status
+```
+
+For a **Blocked** subtask, replace Commit/Artifacts with the Blocked Work
+Protocol details (stuck goal with exact `Goal` state, the proof-theoretic
+gap, approaches tried).
+
+The report is the anti-re-investigation channel: it must contain everything a
+fresh subagent for the next subtask needs, so that no prior investigation is
+repeated.
+
+If at any point in steps 1–8 you hit an unresolvable problem that prevents 100%
 completion, **STOP the cycle immediately** and follow the Blocked Work Protocol
 below. Do NOT attempt to "complete" the subtask with `Admitted` goals, reverted
 work, or known limitations. Do NOT proceed to the next subtask.
@@ -125,36 +204,30 @@ Example for subtask S1:
 - "S1: Pre-Commit Check (code-style)" -> in_progress -> completed
 - "S1: Quality checks" -> in_progress -> completed
 - "S1: Commit" -> in_progress -> completed
+- "S1: Report" -> in_progress -> completed
 ```
 
 ## Multi-Subtask Discipline
 
-When a task has multiple subtasks (S1, S2, S3, ...), execute them **strictly
-sequentially**:
+Subtasks are executed **strictly sequentially** per the Execution Model: one
+fresh subagent per subtask, S(n+1) starting only after S(n)'s report has been
+verified. Within a subtask:
 
-1. Complete all cycle steps for S1 (Implement → Prove/Test → Docs → Pre-Commit
-   Check → Quality → Commit → Mark Done).
-2. Only after S1 is committed, start S2.
-3. Never mark multiple subtasks `completed` in the todo tool before committing
+1. Complete all cycle steps (Implement → Prove/Test → Docs → Pre-Commit Check
+   → Quality → Commit → Mark Done → Report) before the subagent ends.
+2. Never mark multiple subtasks `completed` in the todo tool before committing
    each individually.
 
 ## Blocked Work Protocol
 
 If you encounter a proof-theoretic problem that you cannot resolve to 100%
-correctness, **STOP**. Do not commit. Do not merge. Do not weaken a statement
-or `Admit` a goal to make the build green. Instead:
+correctness, **STOP**. Do not commit partial work. Do not merge. Do not weaken
+a statement or `Admit` a goal to make the build green.
+
+The subagent (child):
 
 1. Stay on the feature branch.
-2. Report the problem concretely to the user:
-   - Which goal is stuck and why (the exact `Goal` state).
-   - What proof-theoretic gap exists (e.g., "inversion on `rule` is not
-     injective for the parallel case").
-   - What you've tried and what remains unresolved.
-3. Ask the user for guidance: additional subtasks, a different encoding,
-   descoping, or splitting the task.
-4. **Transfer user guidance to the task** per the `user-guidance-transfer`
-   skill — post it verbatim as a comment on the task issue.
-5. Append a `## Design Notes` section to `tasks/detailed_plan.md`. See the
+2. Append a `## Design Notes` section to `tasks/detailed_plan.md`. See the
    `planning` skill for the full template. Minimum required content:
 
    - **Correct Design**: the encoding/design as confirmed by the user —
@@ -168,8 +241,19 @@ or `Admit` a goal to make the build green. Instead:
 
    Commit this summary so the plan serves as a persistent design record for
    future task refinement.
-6. Post the block report (the `## Design Notes` content) as a comment on the
+3. Post the block report (the `## Design Notes` content) as a comment on the
    task issue, so the block is visible in the task record.
+4. End with the final report: **Status: Blocked**, the stuck goal with its
+   exact `Goal` state, the proof-theoretic gap, and what was tried.
+
+The parent:
+
+5. Relays the report to the user and asks for guidance: additional subtasks,
+   a different encoding, descoping, or splitting the task.
+6. Transfers the user guidance to the task per the `user-guidance-transfer`
+   skill — posted verbatim as a comment on the task issue.
+7. Starts a **fresh** subagent whose prompt includes the guidance and the
+   Design Notes.
 
 ## Task Completion Verification
 
