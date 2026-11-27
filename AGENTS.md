@@ -36,6 +36,13 @@ gate → merge, and points to the other workflow skills below.
   under `rocq` has all its definitions and proofs verified. There is no
   separate "test run" for a theorem. QuickChick and extraction tests apply to
   *definitions* where empirical checking adds value.
+* **The RTL-like model is cycle-accurate and cycle-precise — and these
+  properties are proved, not assumed.** The concrete co-processor model
+  (`Arch`) is an RTL-like model of the hardware; the spec proves its
+  cycle-accuracy and cycle-precision rather than taking them for granted.
+  They are formalized and proved in the `.v` sources (the code is the
+  specification); the design decisions behind their formalization are
+  recorded in `docs/design.md`.
 * **The Coq code is the specification.** The `.v` sources *are* the spec — not
   an implementation of an external document. No md or other file may carry
   specification content; `md` files are for development documentation only.
