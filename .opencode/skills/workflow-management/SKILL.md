@@ -43,7 +43,10 @@ task, load this skill first; it points to the skills that handle each step.
 4. Generate a detailed plan in `tasks/detailed_plan.md`, decomposing the task
    into atomic subtasks (see `planning`), then post it as a comment on the task
    issue; the first line of the comment is the marker `<!-- detailed-plan -->`.
-5. Load the `subtask-loop` skill, then execute each subtask using its cycle.
+5. Load the `subtask-loop` skill, then execute each subtask per its
+   Execution Model: one fresh subagent per subtask, strictly sequentially;
+   the parent composes the self-contained prompt (spec + accumulated context
+   digest) and verifies/ingests each report.
 5a. Verify all subtasks are complete and unblocked. Check
     `tasks/detailed_plan.md`:
     - If any subtask is marked `[blocked]` or `[deferred]`, STOP immediately.
